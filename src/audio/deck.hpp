@@ -50,6 +50,16 @@ public:
         pitch_pct_ = std::clamp(pct, -100.0, 100.0);
     }
 
+    /// Scrub: si r != 0, el deck avanza a esa velocidad (1.0 = normal,
+    /// 0.125 = 1/8, negativo = atrás) ignorando el pitch. 0 desactiva.
+    void set_scrub_rate(double r) noexcept {
+        scrub_rate_ = std::clamp(r, -8.0, 8.0);
+    }
+
+    [[nodiscard]] bool scrubbing() const noexcept {
+        return scrub_rate_ != 0.0;
+    }
+
     void set_gain(double g) noexcept {
         gain_ = g;
     }
@@ -80,7 +90,8 @@ public:
             zero(out_l, out_r, n, 0);
             return;
         }
-        const double step = (track_.sample_rate / out_rate) * (1.0 + pitch_pct_ / 100.0);
+        const double mult = (scrub_rate_ != 0.0) ? scrub_rate_ : (1.0 + pitch_pct_ / 100.0);
+        const double step = (track_.sample_rate / out_rate) * mult;
         const float g = static_cast<float>(gain_);
         const float* src = track_.samples;
         const std::int64_t frames = track_.frames;
@@ -135,6 +146,7 @@ private:
     TrackView track_{};
     double pos_ = 0.0;
     double pitch_pct_ = 0.0;
+    double scrub_rate_ = 0.0;
     double gain_ = 1.0;
     bool playing_ = false;
 };

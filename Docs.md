@@ -170,17 +170,23 @@ melodeus/
   pools pre-asignados, `rt_guard`.
   **DoD:** mezcla de 2 tracks < 5 ms, 0 xruns en 30 min, tests unitarios de DSP en verde.
   > **Estado (núcleo F1 listo):** ✅ `src/audio/`: `Deck` (interpolador lineal único =
-  > resample de tasa + pitch ±8 %, transporte/seek/gain), `crossfade_gains`
-  > (sharp/linear/const-power), `Engine` (2 decks + master, scratch pre-asignados,
-  > `rt_guard::RtContext` dentro de `process`, peaks atómicos), decoder de archivo
-  > completo wav/flac/mp3 (dr_wav/dr_flac/minimp3, `mp3dec_load_buf`) + encoder WAV
-  > PCM16 para roundtrip; ✅ 12 tests nuevos (31/31, 622 aserciones) incl. roundtrip
-  > wav, pitch +8/−8 %, curvas del crossfader, ga²+gb²=1 y no-alloc en `process`;
-  > ✅ wiring en el spike: el callback WASAPI mezcla por el motor real
-  > (`avg=0.004 ms`, `max=0.030 ms/bloque` vs presupuesto 5 ms; exclusivo 48k/144 f
+  > resample de tasa + pitch ±8 %, transporte/seek/gain/**scrub** a velocidad fija),
+  > `crossfade_gains` (sharp/linear/const-power), `Engine` (2 decks + master, scratch
+  > pre-asignados, `rt_guard::RtContext` dentro de `process`, peaks atómicos),
+  > decoder de archivo completo wav/flac/mp3 (dr_wav/dr_flac/minimp3,
+  > `mp3dec_load_buf`) + encoder WAV PCM16 para roundtrip;
+  > ✅ DSP (`dsp.hpp`): SVF **TPT** (Zavalishin), **EQ 3-bandas** por deck
+  > (LP 250 Hz + HP 4 kHz + residual medio, kill −60 dB, suavizado anti-zipper
+  > 10 ms), **limiter lookahead** brickwall exacto (2 ms, techo −1 dBFS, release
+  > 100 ms, **mínimo deslizante** con deque monótono preasignado — el release
+  > one-pote solo violaba el techo; el deque lo garantiza) y **PeakMeter** con
+  > caída τ=0.4 s (`master_env`, `limiter_gain` para GR);
+  > ✅ 24 tests nuevos (43/43, **5155 aserciones**) incl. respuesta SVF, transparencia
+  > del EQ, brickwall con seno de 2.0, release, scrub 1/8, y no-alloc en `process`;
+  > ✅ wiring en el spike: callback WASAPI → motor real con DSP
+  > (`avg=0.087 ms`, `max=0.407 ms/bloque` vs presupuesto 5 ms; exclusivo 48k/144 f
   > a **9.00 ms**, muestras al 100 %, `SELFTEST=0`).
-  > **Pendiente F1:** EQ 3-band TPT, HP/LP, limiter lookahead, metering,
-  > scrub/waveform de transporte y el estrés de 30 min sin xruns.
+  > **Pendiente F1:** scrub con UI (jog), estrés de 30 min sin xruns.
 
 - **F2 — Render de waveform.** Pirámide multiresolución (min/max por nivel), waveform
   scrolling + bandas RGB (rojo=bajos, azul=agudos) en D3D12, layout ImGui base.

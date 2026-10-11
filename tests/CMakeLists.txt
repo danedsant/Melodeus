@@ -6,6 +6,7 @@ add_executable(melodeus_tests
     test_log_rt.cpp
     test_decoder.cpp
     test_deck.cpp
+    test_dsp.cpp
     test_engine.cpp
 )
 
