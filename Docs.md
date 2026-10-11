@@ -239,6 +239,24 @@ melodeus/
 - **F4 — Streaming y caché.** `YtDlpSource` aislado tras `IStreamSource` + disclaimer de ToS,
   jitter buffer de red, anillo de descarga alrededor del icono, caché LRU por peso.
   **DoD:** pista de YT/SC a play sin glitch con red estable; reintento automático.
+  > **Estado: F4 completo (transporte + caché + UI).** ✅ `src/streaming/`: `IStreamSource`
+  > (interface estable; la app no ve yt-dlp/ffmpeg), `JitterBuffer` (SPSC f32, prefill 1 s,
+  > drenado de clips cortos vía finish(), contadores underrun/overflow), `YtDlpSource`
+  > (hilo propio: yt-dlp `--print title/duration` + pipeline yt-dlp→ffmpeg f32le 48k
+  > estéreo por pipes con herencia selectiva de handles + job object; **reintento
+  > automático ×3 con backoff** si el stream muere antes del 80% de la duración esperada;
+  > fichero local vía sólo-ffmpeg para tests offline), `DiskCache` (LRU por peso, default
+  > 1 GB, índice en memoria, persistencia al reabrir), `load_url_blocking` (caché →
+  > descarga → DecodedTrack → commit). ✅ Spike: `audio_spike_load_samples` (staging con
+  > samples ya decodificados). ✅ UI: fila URL en la biblioteca (input + botón "cargar");
+  > carga en hilo detached con estado en el footer ("descargando..." → "cargado: Título
+  > (Ns) [cache]"); disclaimer de ToS en el commit de F0. ✅ Tests: prefill/drenado/
+  > overflow del jitter, LRU por peso + persistencia de caché, smoke offline ffmpeg
+  > (WAV local → f32le ≈1 s), loader con hit de caché (71/71, 60008 aserciones). ✅
+  > Selftest paced 144.0 fps con la UI de URL, 0 xruns. **Pendiente F4:** prueba con red
+  > real YT/SC (manual; requiere cookies/ToS), descarga incremental al deck (hoy es
+  > full-preload; el jitter buffer ya soporta pull live), anillo de descarga visual
+  > (icono con progreso), scrub sobre streams.
 
 - **F5 — Stems ≤ 500 ms.** Export ONNX de `demucs` (MIT), sesión DML con warm-up, chunker
   hop=100ms/overlap 50% con crossfade, `AlignedDelay` de 450ms en el path seco, Stem-EQ de

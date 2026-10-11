@@ -22,6 +22,9 @@
 #include "audio/decoder.hpp"
 #include "library/database.hpp"
 #include "library/importer.hpp"
+#include "streaming/disk_cache.hpp"
+#include "streaming/stream_loader.hpp"
+#include "streaming/ytdlp_source.hpp"
 
 #include "imgui.h"
 #include "imgui_impl_win32.h"
@@ -30,6 +33,7 @@
 #include <shobjidl.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -37,6 +41,7 @@
 #include <cwchar>
 #include <filesystem>
 #include <string>
+#include <thread>
 #include <vector>
 
 // ImGui declara este handler dentro de un '#if 0' para no arrastrar windows.h;
@@ -58,6 +63,14 @@ WaveformPass g_wave_pass;
 melodeus::library::Database g_db;
 std::filesystem::path g_db_path;
 melodeus::library::ImportWorker g_import;
+
+// Streaming F4: caché LRU + herramientas (relativas al cwd = raíz del repo).
+melodeus::streaming::DiskCache
+    g_stream_cache(std::filesystem::temp_directory_path() / "melodeus_stream_cache", 1ull << 30);
+melodeus::streaming::YtDlpSource::ToolPaths g_stream_tools;
+// Estado de la carga por URL (worker → UI): msg escrito ANTES del phase.
+std::atomic<int> g_url_phase{0}; // 0 idle, 1 bajando, 2 ok, 3 error
+char g_url_msg[160]{};
 
 HWND g_hwnd = nullptr;
 
@@ -358,6 +371,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     }
 
     init_demo_library();
+    g_stream_tools.ytdlp = std::filesystem::path("external") / "yt-dlp" / "yt-dlp.exe";
+    g_stream_tools.ffmpeg = std::filesystem::path("external") / "ffmpeg" / "bin" / "ffmpeg.exe";
     melodeus::app::LibraryUiState lib_state;
     lib_state.db = &g_db;
     lib_state.needs_refresh = true;
@@ -572,6 +587,39 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
                 g_import.start(g_db_path, folder, /*recursive=*/true);
             }
         }
+        // URL (streaming F4): descarga en hilo propio → staging al deck A.
+        if (lib_action == melodeus::app::LibraryAction::LoadUrl &&
+            g_url_phase.load(std::memory_order_acquire) == 0) {
+            const std::string url(lib_state.url);
+            std::thread([url] {
+                std::snprintf(g_url_msg, sizeof(g_url_msg), "descargando...");
+                g_url_phase.store(1, std::memory_order_release);
+                const auto res =
+                    melodeus::streaming::load_url_blocking(g_stream_cache, g_stream_tools, url);
+                if (!res.ok()) {
+                    std::snprintf(g_url_msg, sizeof(g_url_msg), "URL: %s", res.error.c_str());
+                    g_url_phase.store(3, std::memory_order_release);
+                    return;
+                }
+                bool staged = false;
+                for (int i = 0; i < 200 && !staged; ++i) {
+                    staged = melodeus::app::audio_spike_load_samples(
+                        0, res.track.samples.data(), res.track.frames, res.track.channels,
+                        res.track.sample_rate, res.title.c_str());
+                    if (!staged) {
+                        ::Sleep(20); // espera a que se aplique la carga anterior
+                    }
+                }
+                const double secs =
+                    (res.track.sample_rate > 0.0)
+                        ? static_cast<double>(res.track.frames) / res.track.sample_rate
+                        : 0.0;
+                std::snprintf(g_url_msg, sizeof(g_url_msg), "%s: %s (%.0fs)%s",
+                              staged ? "cargado" : "staging ocupado", res.title.c_str(), secs,
+                              res.from_cache ? " [cache]" : "");
+                g_url_phase.store(staged ? 2 : 3, std::memory_order_release);
+            }).detach();
+        }
         // Progreso del import: status en el footer + refresh al terminar.
         {
             static bool import_running_prev = false;
@@ -591,6 +639,11 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
                 import_last_done = -1;
             }
             import_running_prev = g_import.running();
+            // Estado de la carga por URL (msg publicado con release antes).
+            const int url_ph = g_url_phase.load(std::memory_order_acquire);
+            if (url_ph != 0) {
+                std::snprintf(lib_state.status, sizeof(lib_state.status), "%s", g_url_msg);
+            }
         }
         // Selftest: verificar el camino de carga desde la biblioteca.
         if (selftest && !selftest_loaded && now >= 1.0) {

@@ -1,10 +1,10 @@
 #include <doctest.h>
 
 #include "audio/decoder.hpp"
+#include "core/sha1.hpp"
 #include "library/blob.hpp"
 #include "library/database.hpp"
 #include "library/importer.hpp"
-#include "library/sha1.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -181,13 +181,13 @@ TEST_CASE("blob beatgrid roundtrip") {
 }
 
 TEST_CASE("sha1 vectores conocidos") {
-    const auto abc = melodeus::library::sha1("abc", 3);
+    const auto abc = melodeus::core::sha1("abc", 3);
     CHECK(abc[0] == 0xa9);
     CHECK(abc[1] == 0x99);
     CHECK(abc[2] == 0x3e);
     CHECK(abc[3] == 0x36);
     CHECK(abc[19] == 0x9d); // a9993e36...9cd0d89d
-    const auto empty = melodeus::library::sha1("", 0);
+    const auto empty = melodeus::core::sha1("", 0);
     CHECK(empty[0] == 0xda);
     CHECK(empty[19] == 0x09); // da39a3ee...afd80709
 }

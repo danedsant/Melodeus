@@ -2,6 +2,8 @@
 
 #include "waveform/waveform.hpp"
 
+#include <cstdint>
+
 namespace melodeus::app {
 
 /// Spike F0.3/F2/F3: abre el audio por JUCE/WASAPI (exclusivo con fallback a
@@ -47,6 +49,11 @@ bool audio_spike_view(AudioSpikeView* out);
 /// pirámide se hacen en el hilo llamador; el swap es en el hilo de audio
 /// al inicio del siguiente callback. false si ya hay una carga pendiente.
 bool audio_spike_load(int deck, const char* path, const char* title);
+
+/// Igual que audio_spike_load pero con samples ya decodificados (camino de
+/// streaming F4: la descarga se hace en otro hilo y aquí sólo se estagea).
+bool audio_spike_load_samples(int deck, const float* interleaved, std::int64_t frames, int channels,
+                              double sample_rate, const char* title);
 
 /// Alterna play/stop del deck (aplicado en el hilo de audio).
 void audio_spike_toggle_play(int deck);

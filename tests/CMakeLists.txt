@@ -11,12 +11,16 @@ add_executable(melodeus_tests
     test_waveform.cpp
     test_analysis.cpp
     test_library.cpp
+    test_streaming.cpp
 )
 
 target_link_libraries(melodeus_tests PRIVATE melodeus_core melodeus_audio melodeus_waveform
-    melodeus_analysis melodeus_library)
+    melodeus_analysis melodeus_library melodeus_streaming)
 target_include_directories(melodeus_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/external/doctest/doctest
+)
+target_compile_definitions(melodeus_tests PRIVATE
+    MELODEUS_EXTERNAL_DIR="${CMAKE_SOURCE_DIR}/external"
 )
 melodeus_set_warnings(melodeus_tests)
 if(MSVC)

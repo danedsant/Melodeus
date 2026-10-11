@@ -1,8 +1,8 @@
-#include "library/sha1.hpp"
+#include "core/sha1.hpp"
 
 #include <cstring>
 
-namespace melodeus::library {
+namespace melodeus::core {
 
 namespace {
 
@@ -101,4 +101,4 @@ std::array<std::uint8_t, 20> sha1(const void* data, std::size_t size) {
     return out;
 }
 
-} // namespace melodeus::library
+} // namespace melodeus::core

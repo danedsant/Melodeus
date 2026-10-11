@@ -441,6 +441,27 @@ bool audio_spike_load(int deck, const char* path, const char* title) {
     return true;
 }
 
+bool audio_spike_load_samples(int deck, const float* interleaved, std::int64_t frames, int channels,
+                              double sample_rate, const char* title) {
+    if (!g_started || deck < 0 || deck > 1 || interleaved == nullptr || frames <= 0 ||
+        channels <= 0 || sample_rate <= 0.0) {
+        return false;
+    }
+    if (g_cb.pending_load.load(std::memory_order_acquire) >= 0) {
+        return false;
+    }
+    audio::DecodedTrack track;
+    track.channels = channels;
+    track.sample_rate = sample_rate;
+    track.frames = frames;
+    track.samples.assign(interleaved, interleaved + frames * channels);
+    g_cb.stage[deck] = std::move(track);
+    char* t = (deck == 0) ? g_cb.title_a : g_cb.title_b;
+    std::snprintf(t, 128, "%s", (title != nullptr && title[0] != '\0') ? title : "stream");
+    g_cb.pending_load.store(deck, std::memory_order_release);
+    return true;
+}
+
 void audio_spike_toggle_play(int deck) {
     if (deck < 0 || deck > 1) {
         return;

@@ -39,6 +39,7 @@ endif()
 add_library(melodeus_core OBJECT
     src/core/rt_guard.cpp
     src/core/log_rt.cpp
+    src/core/sha1.cpp
 )
 target_include_directories(melodeus_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -55,6 +56,9 @@ add_subdirectory(src/audio)
 add_subdirectory(src/waveform)
 add_subdirectory(src/analysis)
 add_subdirectory(src/library)
+
+# ---------------------------------------------------------------- streaming (F4)
+add_subdirectory(src/streaming)
 
 # ------------------------------------------------------------------ tests
 if(MELODEUS_BUILD_TESTS)

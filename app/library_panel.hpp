@@ -13,17 +13,20 @@ enum class LibraryAction {
     LoadDeckB,
     ToggleSide, ///< mueve el panel al otro lado
     AddFolder,  ///< pide carpeta al usuario (picker COM en main)
+    LoadUrl,    ///< carga una URL (YT/SC/fichero) vía streaming F4
 };
 
 /// Estado del panel de biblioteca (búsqueda FTS5 + tabla).
 struct LibraryUiState {
     const library::Database* db = nullptr; ///< nullptr = panel vacío
     char search[128] = {};
+    char url[1024] = {};
     char status[64] = {}; ///< texto del footer (progreso de import, etc.)
     std::vector<library::TrackMeta> rows;
     int selected = -1;
     bool on_left = true;
     bool needs_refresh = true; ///< buscar al abrir o al cambiar el texto
+    bool url_mode = false;     ///< foco/edición del campo URL
 
     void refresh() {
         rows.clear();

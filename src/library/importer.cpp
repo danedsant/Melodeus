@@ -3,8 +3,8 @@
 #include "analysis/beatgrid.hpp"
 #include "analysis/bpm.hpp"
 #include "audio/decoder.hpp"
+#include "core/sha1.hpp"
 #include "library/blob.hpp"
-#include "library/sha1.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -107,7 +107,8 @@ ImportResult import_file(Database& db, const std::filesystem::path& path) {
     }
 
     // BLOB del beatgrid (kind=0, Docs §7.2) con SHA-1 de los samples.
-    const auto digest = sha1(decoded.samples.data(), decoded.samples.size() * sizeof(float));
+    const auto digest =
+        melodeus::core::sha1(decoded.samples.data(), decoded.samples.size() * sizeof(float));
     auto beatgrid = analysis::make_beatgrid(result.bpm, 0.0);
     const auto packed = pack_beatgrid(beatgrid);
     if (!db.insert_analysis_blob(result.track_id, kBlobBeatgrid, digest.data(), packed.data(),

@@ -61,6 +61,28 @@ LibraryAction draw_library_panel(LibraryUiState& state, float width_px, float he
     }
     ImGui::SetCursorScreenPos(ImVec2(search_mn.x, search_mn.y + search_h + 4.0f * scale));
 
+    // Fila URL (streaming F4): input + botón cargar.
+    const ImVec2 url_mn = ImGui::GetCursorScreenPos();
+    const float url_h = 26.0f * scale;
+    const float url_btn_w = 64.0f * scale;
+    dl->AddRectFilled(url_mn, ImVec2(url_mn.x + width_px - 16.0f * scale, url_mn.y + url_h),
+                      IM_COL32(28, 34, 42, 255), 3.0f);
+    ImGui::SetCursorScreenPos(ImVec2(url_mn.x + 8.0f * scale, url_mn.y + 3.0f * scale));
+    ImGui::SetNextItemWidth(width_px - 32.0f * scale - url_btn_w);
+    ImGui::InputTextWithHint("##url", "https://... (YouTube/SoundCloud)", state.url,
+                             sizeof(state.url));
+    const ImVec2 ub0 = {url_mn.x + width_px - 24.0f * scale - url_btn_w, url_mn.y + 3.0f * scale};
+    const ImVec2 ub1 = {url_mn.x + width_px - 16.0f * scale, url_mn.y + url_h - 3.0f * scale};
+    dl->AddRectFilled(ub0, ub1, IM_COL32(55, 95, 150, 255), 3.0f);
+    const char* load_lbl = "cargar";
+    const ImVec2 ls = ImGui::CalcTextSize(load_lbl);
+    dl->AddText(ImVec2((ub0.x + ub1.x - ls.x) * 0.5f, (ub0.y + ub1.y - ls.y) * 0.5f),
+                IM_COL32(235, 240, 248, 255), load_lbl);
+    if (ImGui::IsMouseClicked(0) && ImGui::IsMouseHoveringRect(ub0, ub1) && state.url[0] != '\0') {
+        action = LibraryAction::LoadUrl;
+    }
+    ImGui::SetCursorScreenPos(ImVec2(url_mn.x, url_mn.y + url_h + 4.0f * scale));
+
     // Tabla: Title | BPM | Key | Time | decks.
     const float table_top = ImGui::GetCursorScreenPos().y;
     const float footer_h = 26.0f * scale;
