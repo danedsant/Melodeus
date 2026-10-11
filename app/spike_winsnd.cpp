@@ -72,6 +72,11 @@ struct EngineCallback final : juce::AudioIODeviceCallback {
     std::atomic<float> ui_gain_b{1.0f};
     std::atomic<float> ui_master{0.15f};
     std::atomic<int> ui_play_toggle{0}; ///< bit0=A bit1=B
+    std::atomic<float> ui_pitch[2]{{0.0f}, {0.0f}};
+    std::atomic<float> ui_seek_sec[2]{{-1.0f}, {-1.0f}}; ///< <0 = sin seek
+    std::atomic<float> ui_eq[2][3]{};                    ///< [deck][0=lo,1=mid,2=hi] dB
+    std::atomic<float> ui_filter[2]{{0.0f}, {0.0f}};     ///< -1 LP .. +1 HP
+    char last_load_error[160]{};
     std::atomic<bool> running{false};
     // Solo en el hilo de audio:
     std::chrono::steady_clock::time_point last_cb_time{};
@@ -178,6 +183,23 @@ struct EngineCallback final : juce::AudioIODeviceCallback {
                     d.play();
                 }
             }
+            // Pitch / seek (CUE) / EQ / filtro (F3.5).
+            for (int d = 0; d < 2; ++d) {
+                audio::Deck& deck = (d == 0) ? engine->deck_a() : engine->deck_b();
+                deck.set_pitch_percent(ui_pitch[d].load(std::memory_order_relaxed));
+                const float seek_to = ui_seek_sec[d].exchange(-1.0f, std::memory_order_acq_rel);
+                if (seek_to >= 0.0f) {
+                    deck.seek(static_cast<double>(seek_to));
+                }
+            }
+            engine->set_eq_a(ui_eq[0][0].load(std::memory_order_relaxed),
+                             ui_eq[0][1].load(std::memory_order_relaxed),
+                             ui_eq[0][2].load(std::memory_order_relaxed));
+            engine->set_eq_b(ui_eq[1][0].load(std::memory_order_relaxed),
+                             ui_eq[1][1].load(std::memory_order_relaxed),
+                             ui_eq[1][2].load(std::memory_order_relaxed));
+            engine->set_filter_a(ui_filter[0].load(std::memory_order_relaxed));
+            engine->set_filter_b(ui_filter[1].load(std::memory_order_relaxed));
 
             const auto t0 = std::chrono::steady_clock::now();
             int done = 0;
@@ -422,16 +444,23 @@ bool audio_spike_view(AudioSpikeView* out) {
 }
 
 bool audio_spike_load(int deck, const char* path, const char* title) {
+    g_cb.last_load_error[0] = '\0';
     if (!g_started || deck < 0 || deck > 1 || path == nullptr || path[0] == '\0') {
+        std::snprintf(g_cb.last_load_error, sizeof(g_cb.last_load_error),
+                      "carga inválida (deck %d)", deck);
         return false;
     }
     if (g_cb.pending_load.load(std::memory_order_acquire) >= 0) {
+        std::snprintf(g_cb.last_load_error, sizeof(g_cb.last_load_error),
+                      "carga anterior aún pendiente");
         return false; // carga anterior aún pendiente
     }
     audio::DecodedTrack decoded;
     std::string error;
     if (!audio::decode_audio_file(path, &decoded, &error) || decoded.frames <= 0) {
         std::printf("[f3] decode falló: %s (%s)\n", path, error.c_str());
+        std::snprintf(g_cb.last_load_error, sizeof(g_cb.last_load_error), "decode falló: %s",
+                      error.empty() ? "formato no soportado" : error.c_str());
         return false;
     }
     g_cb.stage[deck] = std::move(decoded);
@@ -443,6 +472,7 @@ bool audio_spike_load(int deck, const char* path, const char* title) {
 
 bool audio_spike_load_samples(int deck, const float* interleaved, std::int64_t frames, int channels,
                               double sample_rate, const char* title) {
+    g_cb.last_load_error[0] = '\0';
     if (!g_started || deck < 0 || deck > 1 || interleaved == nullptr || frames <= 0 ||
         channels <= 0 || sample_rate <= 0.0) {
         return false;
@@ -474,6 +504,40 @@ void audio_spike_set_mixer(float crossfader, float gain_a, float gain_b, float m
     g_cb.ui_gain_a.store(gain_a, std::memory_order_relaxed);
     g_cb.ui_gain_b.store(gain_b, std::memory_order_relaxed);
     g_cb.ui_master.store(master, std::memory_order_relaxed);
+}
+
+void audio_spike_set_pitch(int deck, float pct) {
+    if (deck < 0 || deck > 1) {
+        return;
+    }
+    g_cb.ui_pitch[deck].store(pct, std::memory_order_relaxed);
+}
+
+void audio_spike_seek(int deck, double seconds) {
+    if (deck < 0 || deck > 1 || seconds < 0.0) {
+        return;
+    }
+    g_cb.ui_seek_sec[deck].store(static_cast<float>(seconds), std::memory_order_release);
+}
+
+void audio_spike_set_eq(int deck, float low_db, float mid_db, float high_db) {
+    if (deck < 0 || deck > 1) {
+        return;
+    }
+    g_cb.ui_eq[deck][0].store(low_db, std::memory_order_relaxed);
+    g_cb.ui_eq[deck][1].store(mid_db, std::memory_order_relaxed);
+    g_cb.ui_eq[deck][2].store(high_db, std::memory_order_relaxed);
+}
+
+void audio_spike_set_filter(int deck, float pos) {
+    if (deck < 0 || deck > 1) {
+        return;
+    }
+    g_cb.ui_filter[deck].store(pos, std::memory_order_relaxed);
+}
+
+const char* audio_spike_last_error() {
+    return g_cb.last_load_error;
 }
 
 void audio_spike_start(int seconds) {

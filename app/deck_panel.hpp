@@ -4,7 +4,7 @@
 
 namespace melodeus::app {
 
-/// Estado visible de un deck para el panel (F3: BPM/key en el display).
+/// Estado visible de un deck para el panel (display DJ: BPM/key/tiempo).
 struct DeckUiState {
     const char* title = "";
     const char* artist = "";
@@ -24,11 +24,19 @@ struct DeckPanelRects {
     RECT detail{};   ///< carril de onda detail (scrolling)
 };
 
-/// Dibuja el header del deck (play, BPM grande + pitched, key Camelot
-/// (tradicional), tiempo/restante, título) y los dos carriles de onda.
-/// Devuelve los rects en píxeles de pantalla para el pase D3D12.
-/// `play_toggled` se pone a true si el usuario pulsó play/stop.
-DeckPanelRects draw_deck_panel(const DeckUiState& state, float width_px, float scale,
-                               bool* play_toggled);
+/// Salida del panel: qué pulsó el usuario y si soltó un track encima.
+struct DeckPanelOut {
+    DeckPanelRects rects{};
+    bool play_toggled = false;
+    bool cue_pressed = false;   ///< CUE = volver a 0
+    bool pitch_changed = false; ///< usuario movió el fader de pitch
+    double pitch_new = 0.0;
+    int drop_row = -1; ///< fila de biblioteca soltada en el deck
+};
+
+/// Dibuja el header del deck (PLAY grande, CUE, BPM gigante + pitched,
+/// key Camelot (tradicional), tiempo/restante, título, pitch fader ±8%)
+/// y los dos carriles de onda (drop targets de la biblioteca).
+DeckPanelOut draw_deck_panel(const DeckUiState& state, int deck_idx, float width_px, float scale);
 
 } // namespace melodeus::app

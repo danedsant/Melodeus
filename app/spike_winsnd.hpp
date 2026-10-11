@@ -61,4 +61,20 @@ void audio_spike_toggle_play(int deck);
 /// Mixer remoto (aplicado en el hilo de audio con smoothing del motor).
 void audio_spike_set_mixer(float crossfader, float gain_a, float gain_b, float master);
 
+/// Pitch del deck en % (aplicado en el hilo de audio).
+void audio_spike_set_pitch(int deck, float pct);
+
+/// Salta a `seconds` (CUE = 0.0). Aplicado en el hilo de audio.
+void audio_spike_seek(int deck, double seconds);
+
+/// EQ de 3 bandas del canal (-26..+6 dB por banda; 0 = plano).
+void audio_spike_set_eq(int deck, float low_db, float mid_db, float high_db);
+
+/// Filtro DJ del canal: -1 = LP full, 0 = bypass, +1 = HP full.
+void audio_spike_set_filter(int deck, float pos);
+
+/// Último error de carga (decode/staging); vacío si la última fue OK.
+/// Cadena estable hasta la siguiente llamada a load.
+const char* audio_spike_last_error();
+
 } // namespace melodeus::app

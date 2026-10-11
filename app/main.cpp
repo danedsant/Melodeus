@@ -72,6 +72,10 @@ melodeus::streaming::YtDlpSource::ToolPaths g_stream_tools;
 std::atomic<int> g_url_phase{0}; // 0 idle, 1 bajando, 2 ok, 3 error
 char g_url_msg[160]{};
 
+// Explorer DnD (F3.5): archivos soltados en la ventana (sólo hilo de UI).
+std::vector<std::wstring> g_drop_files;
+std::atomic<int> g_drop_import_done{-1}; ///< >=0 = soltados extra importados
+
 HWND g_hwnd = nullptr;
 
 LRESULT WINAPI wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
@@ -89,6 +93,19 @@ LRESULT WINAPI wnd_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             return 0;
         }
         break;
+    case WM_DROPFILES: {
+        const HDROP drop = reinterpret_cast<HDROP>(wparam);
+        const UINT count = ::DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+        for (UINT i = 0; i < count && g_drop_files.size() < 8; ++i) {
+            wchar_t buf[MAX_PATH];
+            const UINT len = ::DragQueryFileW(drop, i, buf, MAX_PATH);
+            if (len > 0) {
+                g_drop_files.emplace_back(buf, len);
+            }
+        }
+        ::DragFinish(drop);
+        return 0;
+    }
     case WM_DESTROY:
         ::PostQuitMessage(0);
         return 0;
@@ -296,6 +313,22 @@ std::filesystem::path pick_folder() {
     return result;
 }
 
+/// Conversión wide → UTF-8 (para rutas soltadas desde Explorer).
+std::string wide_to_utf8(const std::wstring& w) {
+    if (w.empty()) {
+        return {};
+    }
+    const int n = ::WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), nullptr,
+                                        0, nullptr, nullptr);
+    if (n <= 0) {
+        return {};
+    }
+    std::string out(static_cast<std::size_t>(n), '\0');
+    ::WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), out.data(), n, nullptr,
+                          nullptr);
+    return out;
+}
+
 /// Barra superior + inferior (estado) alrededor del área de trabajo.
 void draw_chrome(const melodeus::app::RunStats& stats, const wchar_t* adapter, bool vsync,
                  bool selftest, double elapsed, double duration, float width, float scale) {
@@ -350,6 +383,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     if (g_hwnd == nullptr) {
         return 1;
     }
+    ::DragAcceptFiles(g_hwnd, TRUE); // Explorer DnD (F3.5)
 
     if (!g_device.init(g_hwnd)) {
         std::printf("[f3] no se pudo inicializar D3D12\n");
@@ -475,6 +509,24 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
 
         RECT deck_rects[2][2]{}; // [deck][0=overview,1=detail]
         melodeus::app::LibraryAction lib_action = melodeus::app::LibraryAction::None;
+
+        // Carga una fila de la biblioteca en un deck con feedback visible.
+        const auto load_row_to_deck = [&](int deck, int row_idx) {
+            if (row_idx < 0 || row_idx >= static_cast<int>(lib_state.rows.size())) {
+                return;
+            }
+            const auto& row = lib_state.rows[static_cast<std::size_t>(row_idx)];
+            lib_state.selected = row_idx;
+            if (melodeus::app::audio_spike_load(deck, row.uri.c_str(), row.title.c_str())) {
+                std::snprintf(lib_state.status, sizeof(lib_state.status), "deck %s <- %s",
+                              deck == 0 ? "A" : "B", row.title.c_str());
+            } else {
+                const char* err = melodeus::app::audio_spike_last_error();
+                std::snprintf(lib_state.status, sizeof(lib_state.status), "%s",
+                              (err != nullptr && err[0] != '\0') ? err : "carga falló");
+            }
+        };
+
         const auto draw_library = [&]() {
             ImGui::BeginChild("##libcol", ImVec2(lib_w, body_h - 8.0f * scale), false);
             lib_action =
@@ -546,13 +598,22 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
                 }
 
                 const float deck_w = decks_w - 16.0f * scale;
-                bool play_toggled = false;
-                const auto rects = melodeus::app::draw_deck_panel(ds, deck_w, scale, &play_toggled);
-                if (play_toggled) {
+                const melodeus::app::DeckPanelOut dres =
+                    melodeus::app::draw_deck_panel(ds, d, deck_w, scale);
+                if (dres.play_toggled) {
                     melodeus::app::audio_spike_toggle_play(d);
                 }
-                deck_rects[d][0] = rects.overview;
-                deck_rects[d][1] = rects.detail;
+                if (dres.cue_pressed) {
+                    melodeus::app::audio_spike_seek(d, 0.0);
+                }
+                if (dres.pitch_changed) {
+                    melodeus::app::audio_spike_set_pitch(d, static_cast<float>(dres.pitch_new));
+                }
+                if (dres.drop_row >= 0) {
+                    load_row_to_deck(d, dres.drop_row);
+                }
+                deck_rects[d][0] = dres.rects.overview;
+                deck_rects[d][1] = dres.rects.detail;
                 if (d == 0) {
                     ImGui::Dummy(ImVec2(0.0f, 10.0f * scale));
                 }
@@ -572,12 +633,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         // Acciones de la biblioteca (carga en deck).
         if (lib_action == melodeus::app::LibraryAction::LoadDeckA ||
             lib_action == melodeus::app::LibraryAction::LoadDeckB) {
-            if (lib_state.selected >= 0 &&
-                lib_state.selected < static_cast<int>(lib_state.rows.size())) {
-                const auto& row = lib_state.rows[static_cast<std::size_t>(lib_state.selected)];
-                const int deck = (lib_action == melodeus::app::LibraryAction::LoadDeckA) ? 0 : 1;
-                melodeus::app::audio_spike_load(deck, row.uri.c_str(), row.title.c_str());
-            }
+            const int deck = (lib_action == melodeus::app::LibraryAction::LoadDeckA) ? 0 : 1;
+            load_row_to_deck(deck, lib_state.selected);
         }
         // "+ carpeta": import en background (hilo con su propia conexión WAL).
         if (lib_action == melodeus::app::LibraryAction::AddFolder && !g_import.running()) {
@@ -643,6 +700,132 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             const int url_ph = g_url_phase.load(std::memory_order_acquire);
             if (url_ph != 0) {
                 std::snprintf(lib_state.status, sizeof(lib_state.status), "%s", g_url_msg);
+            }
+            // Archivos soltados importados a la biblioteca (hilo propio).
+            const int drop_done = g_drop_import_done.exchange(-1, std::memory_order_acq_rel);
+            if (drop_done >= 0) {
+                std::snprintf(lib_state.status, sizeof(lib_state.status), "soltado: %d importado",
+                              drop_done);
+                lib_state.needs_refresh = true;
+            }
+        }
+        // Mixer → motor (F3.5): crossfade/gains/master + EQ + filtro por canal.
+        if (audio_on) {
+            melodeus::app::audio_spike_set_mixer(mixer.crossfader, mixer.ch_gain_a, mixer.ch_gain_b,
+                                                 mixer.master);
+            for (int ch = 0; ch < 2; ++ch) {
+                melodeus::app::audio_spike_set_eq(ch, mixer.eq_db[ch][0], mixer.eq_db[ch][1],
+                                                  mixer.eq_db[ch][2]);
+                melodeus::app::audio_spike_set_filter(ch, mixer.filter[ch]);
+            }
+        }
+        // Atajos de teclado (F3.5); no interfieren al escribir en un campo.
+        if (!ImGui::GetIO().WantTextInput) {
+            if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, false)) {
+                lib_state.move_selection(-1);
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, false)) {
+                lib_state.move_selection(1);
+            }
+            const bool shift = ImGui::GetIO().KeyShift;
+            if (ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
+                ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)) {
+                load_row_to_deck(shift ? 1 : 0, lib_state.selected);
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_1, false)) {
+                load_row_to_deck(0, lib_state.selected);
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_2, false)) {
+                load_row_to_deck(1, lib_state.selected);
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_Q, false)) {
+                melodeus::app::audio_spike_toggle_play(0);
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_W, false)) {
+                melodeus::app::audio_spike_toggle_play(1);
+            }
+            const float step = shift ? 0.1f : 0.5f;
+            if (ImGui::IsKeyPressed(ImGuiKey_Z, false) && audio_on) {
+                melodeus::app::audio_spike_set_pitch(0,
+                                                     static_cast<float>(view.pitch_a_pct) - step);
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_X, false) && audio_on) {
+                melodeus::app::audio_spike_set_pitch(0,
+                                                     static_cast<float>(view.pitch_a_pct) + step);
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_Comma, false) && audio_on) {
+                melodeus::app::audio_spike_set_pitch(1,
+                                                     static_cast<float>(view.pitch_b_pct) - step);
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_Period, false) && audio_on) {
+                melodeus::app::audio_spike_set_pitch(1,
+                                                     static_cast<float>(view.pitch_b_pct) + step);
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_C, false)) { // CUE deck A
+                melodeus::app::audio_spike_seek(0, 0.0);
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_N, false)) { // CUE deck B
+                melodeus::app::audio_spike_seek(1, 0.0);
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_Space, false) && audio_on) { // stop ambos
+                if (view.playing_a) {
+                    melodeus::app::audio_spike_toggle_play(0);
+                }
+                if (view.playing_b) {
+                    melodeus::app::audio_spike_toggle_play(1);
+                }
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_F, false)) {
+                lib_state.on_left = !lib_state.on_left;
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_Slash, false)) {
+                lib_state.focus_search = true;
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                lib_state.search[0] = '\0';
+                lib_state.needs_refresh = true;
+            }
+        }
+        // Archivos soltados desde Explorer: 1º → deck A, 2º → deck B,
+        // resto → import a la biblioteca (hilo con conexión propia).
+        if (!g_drop_files.empty()) {
+            std::vector<std::wstring> dropped;
+            dropped.swap(g_drop_files);
+            std::vector<std::filesystem::path> extra;
+            int deck_i = 0;
+            for (const auto& wpath : dropped) {
+                const std::filesystem::path p(wpath);
+                if (deck_i < 2) {
+                    const std::string u8 = wide_to_utf8(wpath);
+                    const std::string title = wide_to_utf8(p.filename().wstring());
+                    if (melodeus::app::audio_spike_load(deck_i, u8.c_str(), title.c_str())) {
+                        std::snprintf(lib_state.status, sizeof(lib_state.status),
+                                      "soltado -> deck %s", deck_i == 0 ? "A" : "B");
+                    } else {
+                        const char* err = melodeus::app::audio_spike_last_error();
+                        std::snprintf(lib_state.status, sizeof(lib_state.status), "%s",
+                                      (err != nullptr && err[0] != '\0') ? err : "carga falló");
+                    }
+                    ++deck_i;
+                } else {
+                    extra.push_back(p);
+                }
+            }
+            if (!extra.empty()) {
+                const auto dbp = g_db_path;
+                std::thread([extra, dbp] {
+                    melodeus::library::Database db;
+                    if (!db.open(dbp.string().c_str())) {
+                        return;
+                    }
+                    int ok = 0;
+                    for (const auto& f : extra) {
+                        if (melodeus::library::import_file(db, f).track_id > 0) {
+                            ++ok;
+                        }
+                    }
+                    g_drop_import_done.store(ok, std::memory_order_release);
+                }).detach();
             }
         }
         // Selftest: verificar el camino de carga desde la biblioteca.

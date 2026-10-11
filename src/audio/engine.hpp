@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <vector>
@@ -42,6 +43,16 @@ public:
 
     void set_eq_b(double low_db, double mid_db, double high_db) noexcept {
         eq_b_.set_bands(low_db, mid_db, high_db);
+    }
+
+    /// Filtro DJ por canal: -1 = LP full (cutoff → 300 Hz), 0 = bypass,
+    /// +1 = HP full (cutoff → 3 kHz). Suavizado one-pole anti-zipper.
+    void set_filter_a(double pos) noexcept {
+        filter_a_ = std::clamp(pos, -1.0, 1.0);
+    }
+
+    void set_filter_b(double pos) noexcept {
+        filter_b_ = std::clamp(pos, -1.0, 1.0);
     }
 
     void set_limiter_ceiling_db(double db) noexcept {
@@ -90,6 +101,15 @@ private:
     double master_gain_ = 1.0;
     StereoEq eq_a_;
     StereoEq eq_b_;
+    // Filtro DJ: SVF TPT por canal (L/R); posición -1..+1 con suavizado.
+    TptSvf svf_a_l_;
+    TptSvf svf_a_r_;
+    TptSvf svf_b_l_;
+    TptSvf svf_b_r_;
+    double filter_a_ = 0.0; ///< objetivo (hilo de control)
+    double filter_b_ = 0.0;
+    double sm_filter_a_ = 0.0; ///< suavizado (hilo de audio)
+    double sm_filter_b_ = 0.0;
     LookaheadLimiter limiter_;
     PeakMeter master_meter_;
     std::vector<float> scratch_a_l_;

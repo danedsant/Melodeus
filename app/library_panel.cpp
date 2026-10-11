@@ -6,6 +6,18 @@
 
 namespace melodeus::app {
 
+namespace {
+
+constexpr ImU32 kColPanelBg = IM_COL32(20, 22, 28, 255);
+constexpr ImU32 kColBorder = IM_COL32(45, 50, 60, 255);
+constexpr ImU32 kColText = IM_COL32(200, 208, 220, 255);
+constexpr ImU32 kColTextDim = IM_COL32(130, 140, 155, 255);
+constexpr ImU32 kColTextHot = IM_COL32(235, 240, 248, 255);
+constexpr ImU32 kColBtnA = IM_COL32(45, 85, 145, 255);
+constexpr ImU32 kColBtnB = IM_COL32(140, 85, 55, 255);
+
+} // namespace
+
 LibraryAction draw_library_panel(LibraryUiState& state, float width_px, float height_px,
                                  float scale) {
     LibraryAction action = LibraryAction::None;
@@ -15,43 +27,41 @@ LibraryAction draw_library_panel(LibraryUiState& state, float width_px, float he
 
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImVec2 mn = ImGui::GetCursorScreenPos();
-    dl->AddRectFilled(mn, ImVec2(mn.x + width_px, mn.y + height_px), IM_COL32(20, 22, 28, 255));
-    dl->AddRect(mn, ImVec2(mn.x + width_px, mn.y + height_px), IM_COL32(45, 50, 60, 255));
+    dl->AddRectFilled(mn, ImVec2(mn.x + width_px, mn.y + height_px), kColPanelBg);
+    dl->AddRect(mn, ImVec2(mn.x + width_px, mn.y + height_px), kColBorder);
 
-    // Cabecera: título + contador + toggle de lado.
+    // --- Cabecera: título + contador + toggle de lado ---------------------
     const float header_h = 28.0f * scale;
-    dl->AddText(ImVec2(mn.x + 10.0f * scale, mn.y + 6.0f * scale), IM_COL32(200, 208, 220, 255),
-                "BIBLIOTECA");
+    dl->AddText(ImVec2(mn.x + 10.0f * scale, mn.y + 6.0f * scale), kColText, "BIBLIOTECA");
     const int total = (state.db != nullptr) ? state.db->count() : 0;
-    char buf[64];
+    char buf[96];
     std::snprintf(buf, sizeof(buf), "(%d)", total);
     const ImVec2 cs = ImGui::CalcTextSize(buf);
-    dl->AddText(ImVec2(mn.x + width_px - 52.0f * scale - cs.x, mn.y + 6.0f * scale),
-                IM_COL32(130, 140, 155, 255), buf);
+    dl->AddText(ImVec2(mn.x + width_px - 52.0f * scale - cs.x, mn.y + 6.0f * scale), kColTextDim,
+                buf);
 
-    // Botón toggle (↔).
     const ImVec2 t0 = {mn.x + width_px - 44.0f * scale, mn.y + 4.0f * scale};
     const ImVec2 t1 = {mn.x + width_px - 8.0f * scale, mn.y + header_h - 4.0f * scale};
     dl->AddRectFilled(t0, t1, IM_COL32(50, 56, 68, 255), 3.0f);
     const char* toggle = state.on_left ? ">>" : "<<";
     const ImVec2 ts = ImGui::CalcTextSize(toggle);
-    dl->AddText(ImVec2((t0.x + t1.x - ts.x) * 0.5f, (t0.y + t1.y - ts.y) * 0.5f),
-                IM_COL32(210, 216, 226, 255), toggle);
+    dl->AddText(ImVec2((t0.x + t1.x - ts.x) * 0.5f, (t0.y + t1.y - ts.y) * 0.5f), kColTextHot,
+                toggle);
     if (ImGui::IsMouseClicked(0) && ImGui::IsMouseHoveringRect(t0, t1)) {
         state.on_left = !state.on_left;
         action = LibraryAction::ToggleSide;
     }
-
     ImGui::Dummy(ImVec2(0.0f, header_h));
 
-    // Buscador.
-    const ImVec2 search_mn = ImGui::GetCursorScreenPos();
-    const float search_h = 26.0f * scale;
-    dl->AddRectFilled(search_mn,
-                      ImVec2(search_mn.x + width_px - 16.0f * scale, search_mn.y + search_h),
-                      IM_COL32(30, 33, 40, 255), 3.0f);
-    ImGui::SetCursorScreenPos(ImVec2(search_mn.x + 8.0f * scale, search_mn.y + 3.0f * scale));
-    ImGui::SetNextItemWidth(width_px - 32.0f * scale);
+    // --- Buscador ----------------------------------------------------------
+    const float pad = 8.0f * scale;
+    const float inner_w = width_px - pad * 2.0f;
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + pad);
+    ImGui::SetNextItemWidth(inner_w);
+    if (state.focus_search) {
+        ImGui::SetKeyboardFocusHere();
+        state.focus_search = false;
+    }
     if (ImGui::InputTextWithHint("##search", "buscar (titulo, artista, album)...", state.search,
                                  sizeof(state.search), ImGuiInputTextFlags_EnterReturnsTrue)) {
         state.needs_refresh = true;
@@ -59,126 +69,119 @@ LibraryAction draw_library_panel(LibraryUiState& state, float width_px, float he
     if (ImGui::IsItemEdited()) {
         state.needs_refresh = true;
     }
-    ImGui::SetCursorScreenPos(ImVec2(search_mn.x, search_mn.y + search_h + 4.0f * scale));
 
-    // Fila URL (streaming F4): input + botón cargar.
-    const ImVec2 url_mn = ImGui::GetCursorScreenPos();
-    const float url_h = 26.0f * scale;
+    // --- Fila URL (streaming F4) ------------------------------------------
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + pad);
     const float url_btn_w = 64.0f * scale;
-    dl->AddRectFilled(url_mn, ImVec2(url_mn.x + width_px - 16.0f * scale, url_mn.y + url_h),
-                      IM_COL32(28, 34, 42, 255), 3.0f);
-    ImGui::SetCursorScreenPos(ImVec2(url_mn.x + 8.0f * scale, url_mn.y + 3.0f * scale));
-    ImGui::SetNextItemWidth(width_px - 32.0f * scale - url_btn_w);
+    ImGui::SetNextItemWidth(inner_w - url_btn_w - 4.0f * scale);
     ImGui::InputTextWithHint("##url", "https://... (YouTube/SoundCloud)", state.url,
                              sizeof(state.url));
-    const ImVec2 ub0 = {url_mn.x + width_px - 24.0f * scale - url_btn_w, url_mn.y + 3.0f * scale};
-    const ImVec2 ub1 = {url_mn.x + width_px - 16.0f * scale, url_mn.y + url_h - 3.0f * scale};
-    dl->AddRectFilled(ub0, ub1, IM_COL32(55, 95, 150, 255), 3.0f);
-    const char* load_lbl = "cargar";
-    const ImVec2 ls = ImGui::CalcTextSize(load_lbl);
-    dl->AddText(ImVec2((ub0.x + ub1.x - ls.x) * 0.5f, (ub0.y + ub1.y - ls.y) * 0.5f),
-                IM_COL32(235, 240, 248, 255), load_lbl);
-    if (ImGui::IsMouseClicked(0) && ImGui::IsMouseHoveringRect(ub0, ub1) && state.url[0] != '\0') {
+    ImGui::SameLine(0.0f, 4.0f * scale);
+    if (ImGui::Button("cargar", ImVec2(url_btn_w, 0.0f)) && state.url[0] != '\0') {
         action = LibraryAction::LoadUrl;
     }
-    ImGui::SetCursorScreenPos(ImVec2(url_mn.x, url_mn.y + url_h + 4.0f * scale));
 
-    // Tabla: Title | BPM | Key | Time | decks.
-    const float table_top = ImGui::GetCursorScreenPos().y;
+    ImGui::Dummy(ImVec2(0.0f, 4.0f * scale));
+
+    // --- Tabla de pistas ---------------------------------------------------
+    // Widgets ImGui reales (Selectable + botones): visibles, con hover y
+    // drag & drop. El bug F3.5 anterior eran rects manuales tapados por el
+    // fondo opaco del hijo.
     const float footer_h = 26.0f * scale;
-    const float table_h = mn.y + height_px - footer_h - table_top;
-    const float row_h = 22.0f * scale;
-    const float col_bpm = 56.0f * scale;
-    const float col_key = 44.0f * scale;
-    const float col_time = 52.0f * scale;
-    const float col_decks = 40.0f * scale;
-    const float col_title = width_px - 16.0f * scale - col_bpm - col_key - col_time - col_decks;
+    const float table_h = mn.y + height_px - footer_h - ImGui::GetCursorScreenPos().y;
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + pad);
+    if (ImGui::BeginTable("##lib", 5,
+                          ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp |
+                              ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_RowBg |
+                              ImGuiTableFlags_Hideable,
+                          ImVec2(inner_w, table_h))) {
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableSetupColumn("Título", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("BPM", ImGuiTableColumnFlags_WidthFixed, 52.0f * scale);
+        ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthFixed, 40.0f * scale);
+        ImGui::TableSetupColumn("Time", ImGuiTableColumnFlags_WidthFixed, 46.0f * scale);
+        ImGui::TableSetupColumn("##ab", ImGuiTableColumnFlags_WidthFixed, 46.0f * scale);
+        ImGui::TableHeadersRow();
 
-    ImGui::SetCursorScreenPos(ImVec2(mn.x + 8.0f * scale, table_top));
-    ImGui::BeginChild("##libtable", ImVec2(width_px - 16.0f * scale, table_h), false,
-                      ImGuiWindowFlags_HorizontalScrollbar);
-    {
-        const int visible = static_cast<int>(table_h / row_h) + 2;
         for (int i = 0; i < static_cast<int>(state.rows.size()); ++i) {
             const library::TrackMeta& t = state.rows[static_cast<std::size_t>(i)];
+            ImGui::TableNextRow(ImGuiTableRowFlags_None, 22.0f * scale);
+
+            // Cols 0-3: fila seleccionable (clic = seleccionar, doble = cargar A).
+            ImGui::TableSetColumnIndex(0);
+            ImGui::PushID(i);
             const bool sel = (i == state.selected);
-            const ImVec2 r0 = ImGui::GetCursorScreenPos();
-            const ImVec2 r1 = {r0.x + width_px - 24.0f * scale, r0.y + row_h};
-            if (sel) {
-                dl->AddRectFilled(r0, r1, IM_COL32(45, 70, 110, 255));
-            } else if (i % 2 == 0) {
-                dl->AddRectFilled(r0, r1, IM_COL32(26, 29, 36, 255));
-            }
-
-            // Nombre (clip a una línea).
-            dl->PushClipRect(r0, ImVec2(r0.x + col_title - 4.0f, r1.y), true);
-            dl->AddText(ImVec2(r0.x + 6.0f, r0.y + 3.0f), IM_COL32(220, 226, 236, 255),
-                        t.title.c_str());
-            dl->PopClipRect();
-
-            char rowbuf[64];
-            if (t.bpm > 0.0) {
-                std::snprintf(rowbuf, sizeof(rowbuf), "%.1f", t.bpm);
-            } else {
-                std::snprintf(rowbuf, sizeof(rowbuf), "--");
-            }
-            dl->AddText(ImVec2(r0.x + col_title, r0.y + 3.0f), IM_COL32(170, 195, 225, 255),
-                        rowbuf);
-
-            if (t.camelot > 0) {
-                std::snprintf(rowbuf, sizeof(rowbuf), "%d%c", t.camelot,
-                              t.camelot_minor ? 'A' : 'B');
-            } else {
-                std::snprintf(rowbuf, sizeof(rowbuf), "--");
-            }
-            dl->AddText(ImVec2(r0.x + col_title + col_bpm, r0.y + 3.0f),
-                        IM_COL32(170, 210, 175, 255), rowbuf);
-
-            const int secs = static_cast<int>(t.duration_ms / 1000);
-            std::snprintf(rowbuf, sizeof(rowbuf), "%d:%02d", secs / 60, secs % 60);
-            dl->AddText(ImVec2(r0.x + col_title + col_bpm + col_key, r0.y + 3.0f),
-                        IM_COL32(150, 158, 170, 255), rowbuf);
-
-            // Botones A/B.
-            const ImVec2 ba0 = {r1.x - col_decks + 2.0f, r0.y + 2.0f};
-            const ImVec2 ba1 = {ba0.x + 17.0f * scale, r1.y - 2.0f};
-            const ImVec2 bb0 = {ba1.x + 2.0f, ba0.y};
-            const ImVec2 bb1 = {bb0.x + 17.0f * scale, ba1.y};
-            dl->AddRectFilled(ba0, ba1, IM_COL32(55, 95, 150, 255), 2.0f);
-            dl->AddRectFilled(bb0, bb1, IM_COL32(130, 80, 60, 255), 2.0f);
-            const ImVec2 asz = ImGui::CalcTextSize("A");
-            const ImVec2 bsz = ImGui::CalcTextSize("B");
-            dl->AddText(ImVec2((ba0.x + ba1.x - asz.x) * 0.5f, (ba0.y + ba1.y - asz.y) * 0.5f),
-                        IM_COL32(235, 240, 248, 255), "A");
-            dl->AddText(ImVec2((bb0.x + bb1.x - bsz.x) * 0.5f, (bb0.y + bb1.y - bsz.y) * 0.5f),
-                        IM_COL32(235, 240, 248, 255), "B");
-
-            // Hit-testing (la tabla es decorativa; capturamos el ratón aquí).
-            ImGui::SetCursorScreenPos(r0);
-            ImGui::Dummy(ImVec2(width_px - 24.0f * scale, row_h));
-            if (ImGui::IsItemHovered()) {
-                if (ImGui::IsMouseClicked(1)) {
-                    state.selected = i;
-                } else if (ImGui::IsMouseDoubleClicked(0)) {
-                    state.selected = i;
+            if (ImGui::Selectable(t.title.c_str(), sel,
+                                  ImGuiSelectableFlags_SpanAllColumns |
+                                      ImGuiSelectableFlags_AllowDoubleClick,
+                                  ImVec2(0.0f, 18.0f * scale))) {
+                state.selected = i;
+                if (ImGui::IsMouseDoubleClicked(0)) {
                     action = LibraryAction::LoadDeckA;
                 }
             }
-            if (ImGui::IsMouseClicked(0) && ImGui::IsMouseHoveringRect(ba0, ba1)) {
+            if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(1)) {
+                state.selected = i;
+            }
+            // Arrastrar la fila a un deck (payload con el índice).
+            if (ImGui::BeginDragDropSource()) {
+                TrackDragPayload payload;
+                payload.row = i;
+                ImGui::SetDragDropPayload(kTrackDragType, &payload, sizeof(payload));
+                ImGui::Text("%s", t.title.c_str());
+                ImGui::EndDragDropSource();
+            }
+            if (state.scroll_to_selected && sel) {
+                ImGui::SetScrollHereY();
+                state.scroll_to_selected = false;
+            }
+
+            char cell[64];
+            ImGui::TableSetColumnIndex(1);
+            if (t.bpm > 0.0) {
+                std::snprintf(cell, sizeof(cell), "%.1f", t.bpm);
+            } else {
+                std::snprintf(cell, sizeof(cell), "--");
+            }
+            ImGui::TextDisabled("%s", cell);
+
+            ImGui::TableSetColumnIndex(2);
+            if (t.camelot > 0) {
+                std::snprintf(cell, sizeof(cell), "%d%c", t.camelot, t.camelot_minor ? 'A' : 'B');
+            } else {
+                std::snprintf(cell, sizeof(cell), "--");
+            }
+            ImGui::TextColored(ImVec4(0.55f, 0.78f, 0.60f, 1.0f), "%s", cell);
+
+            ImGui::TableSetColumnIndex(3);
+            const int secs = static_cast<int>(t.duration_ms / 1000);
+            std::snprintf(cell, sizeof(cell), "%d:%02d", secs / 60, secs % 60);
+            ImGui::TextDisabled("%s", cell);
+
+            // Col 4: cargar a A/B.
+            ImGui::TableSetColumnIndex(4);
+            ImGui::PushStyleColor(ImGuiCol_Button, kColBtnA);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(60, 105, 175, 255));
+            if (ImGui::SmallButton("A")) {
                 state.selected = i;
                 action = LibraryAction::LoadDeckA;
             }
-            if (ImGui::IsMouseClicked(0) && ImGui::IsMouseHoveringRect(bb0, bb1)) {
+            ImGui::SameLine(0.0f, 3.0f * scale);
+            ImGui::PopStyleColor(2);
+            ImGui::PushStyleColor(ImGuiCol_Button, kColBtnB);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(165, 105, 70, 255));
+            if (ImGui::SmallButton("B")) {
                 state.selected = i;
                 action = LibraryAction::LoadDeckB;
             }
+            ImGui::PopStyleColor(2);
+            ImGui::PopID();
         }
-        (void)visible;
+        ImGui::EndTable();
     }
-    ImGui::EndChild();
 
-    // Footer: "+ carpeta" (clic real) + progreso/filas.
-    const ImVec2 foot = {mn.x + 8.0f * scale, mn.y + height_px - footer_h + 2.0f * scale};
+    // --- Footer: [+ carpeta] + estado --------------------------------------
+    const ImVec2 foot = {mn.x + pad, mn.y + height_px - footer_h + 2.0f * scale};
     ImGui::SetCursorScreenPos(foot);
     const ImVec2 f0 = ImGui::GetCursorScreenPos();
     ImGui::TextColored(state.status[0] != '\0' ? ImVec4(0.65f, 0.72f, 0.82f, 1.0f)

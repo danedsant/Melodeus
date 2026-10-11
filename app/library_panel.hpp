@@ -16,6 +16,12 @@ enum class LibraryAction {
     LoadUrl,    ///< carga una URL (YT/SC/fichero) vía streaming F4
 };
 
+/// Payload ImGui para arrastrar una fila de la biblioteca a un deck.
+struct TrackDragPayload {
+    int row = -1; ///< índice en LibraryUiState::rows
+};
+inline constexpr const char* kTrackDragType = "MD_TRACK";
+
 /// Estado del panel de biblioteca (búsqueda FTS5 + tabla).
 struct LibraryUiState {
     const library::Database* db = nullptr; ///< nullptr = panel vacío
@@ -25,21 +31,44 @@ struct LibraryUiState {
     std::vector<library::TrackMeta> rows;
     int selected = -1;
     bool on_left = true;
-    bool needs_refresh = true; ///< buscar al abrir o al cambiar el texto
-    bool url_mode = false;     ///< foco/edición del campo URL
+    bool needs_refresh = true;       ///< buscar al abrir o al cambiar el texto
+    bool focus_search = false;       ///< atajo '/' → foco en el buscador
+    bool scroll_to_selected = false; ///< al cambiar la selección por teclado
 
     void refresh() {
         rows.clear();
-        selected = -1;
         if (db != nullptr && db->ok()) {
             rows = db->search(search[0] != '\0' ? search : "", 500);
         }
+        if (selected >= static_cast<int>(rows.size())) {
+            selected = -1;
+        }
         needs_refresh = false;
+    }
+
+    /// Mueve la selección con ↑/↓ (la_visibilidad la pide el panel).
+    void move_selection(int delta) {
+        if (rows.empty()) {
+            selected = -1;
+            return;
+        }
+        if (selected < 0) {
+            selected = (delta > 0) ? 0 : static_cast<int>(rows.size()) - 1;
+        } else {
+            selected += delta;
+            if (selected < 0) {
+                selected = 0;
+            }
+            if (selected >= static_cast<int>(rows.size())) {
+                selected = static_cast<int>(rows.size()) - 1;
+            }
+        }
+        scroll_to_selected = true;
     }
 };
 
-/// Dibuja el panel (cabecera con toggle, buscador, tabla). Devuelve la
-/// acción del frame (carga en deck, toggle de lado).
+/// Dibuja el panel (cabecera con toggle, buscador, URL, tabla con Selectable
+/// + drag & drop, footer con estado). Devuelve la acción del frame.
 LibraryAction draw_library_panel(LibraryUiState& state, float width_px, float height_px,
                                  float scale);
 

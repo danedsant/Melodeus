@@ -258,6 +258,32 @@ melodeus/
   > full-preload; el jitter buffer ya soporta pull live), anillo de descarga visual
   > (icono con progreso), scrub sobre streams.
 
+- **F3.5 — UX DJ (pasada de usabilidad).** Arregla el bug de filas invisibles de la
+  biblioteca y completa los controles básicos de un set: carga/transporte/pitch/EQ/filtro,
+  drag & drop y atajos de teclado.
+  **DoD:** biblioteca usable con ratón y teclado, controles DJ operativos, sin regresión
+  de rendimiento (72/72 tests, selftest paced 144 fps / 0 xruns).
+  > **Estado: F3.5 completo.** ✅ **Biblioteca reescrita con widgets ImGui reales**
+  > (`BeginTable` 5 columnas + `Selectable` con SpanAllColumns): el bug raíz eran filas
+  > dibujadas con rects manuales dentro de un `BeginChild` cuyo fondo opaco (`##libtable`)
+  > las tapaba → "no puedo cargar". Ahora hay hover, selección visible, scroll-into-view
+  > con ↑/↓, doble-click carga a A, botones A/B por fila y **drag & drop fila→deck**
+  > (payload `MD_TRACK`). ✅ **Decks**: PLAY gigante + botón CUE (seek 0), pitch fader
+  > vertical ±8 % (doble-click = reset), BPM gigante + pitched, key Camelot(tradicional),
+  > tiempo/restante; carriles de onda como **drop targets**. ✅ **Mixer**: knobs de EQ
+  > 3 bandas (LOW/MID/HI, −26..+6 dB, doble-click = 0) y **filtro DJ por canal** (−1 LP
+  > 300 Hz … 0 bypass … +1 HP 3 kHz) con SVF TPT + suavizado one-pole anti-zipper en
+  > `Engine` (test: corta 5 kHz con LP y 100 Hz con HP, bypass transparente). ✅ **Explorer
+  > DnD**: `WM_DROPFILES` → 1º archivo al deck A, 2º al B, resto importa a la biblioteca
+  > (hilo con conexión propia WAL). ✅ **Atajos** (inactivos al escribir en un campo):
+  > ↑/↓ navegar, Enter/Shift+Enter o 1/2 cargar A/B, Q/W play-pause, Z/X y ,/. pitch
+  > (Shift = fino 0.1 %), C/N CUE, Space stop, F mover biblioteca, / buscar, Esc limpiar.
+  > ✅ **Feedback de error visible** en el footer (`audio_spike_last_error`), no sólo
+  > printf. ✅ Tests 72/72 (60012 aserciones), selftest paced 144.0 fps / 0 xruns,
+  > build sin warnings. **Pendiente F3.5:** scrub/jog (heredado de F1), learn de
+  > filtros con botones de preset, feedback de drop durante el arrastre (highlight
+  > más marcado).
+
 - **F5 — Stems ≤ 500 ms.** Export ONNX de `demucs` (MIT), sesión DML con warm-up, chunker
   hop=100ms/overlap 50% con crossfade, `AlignedDelay` de 450ms en el path seco, Stem-EQ de
   4 faders, degradación elegante (GPU → CPU → off con aviso).

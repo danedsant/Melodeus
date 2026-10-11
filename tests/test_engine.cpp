@@ -20,6 +20,30 @@ melodeus::audio::DecodedTrack make_constant(float value, double secs, double rat
     return t;
 }
 
+melodeus::audio::DecodedTrack make_sine(double freq, double secs, double rate) {
+    melodeus::audio::DecodedTrack t;
+    t.channels = 2;
+    t.sample_rate = rate;
+    t.frames = static_cast<std::int64_t>(secs * rate);
+    t.samples.resize(static_cast<std::size_t>(t.frames) * 2);
+    constexpr double kTwoPi = 6.28318530717958647692;
+    for (std::int64_t i = 0; i < t.frames; ++i) {
+        const float s =
+            0.5f * static_cast<float>(std::sin(kTwoPi * freq * static_cast<double>(i) / rate));
+        t.samples[static_cast<std::size_t>(i) * 2] = s;
+        t.samples[static_cast<std::size_t>(i) * 2 + 1] = s;
+    }
+    return t;
+}
+
+float block_peak(const std::vector<float>& l) {
+    float peak = 0.0f;
+    for (float v : l) {
+        peak = std::max(peak, std::fabs(v));
+    }
+    return peak;
+}
+
 void load_play(melodeus::audio::Deck& deck, const melodeus::audio::DecodedTrack& tr) {
     deck.load({tr.samples.data(), tr.frames, tr.channels, tr.sample_rate});
     deck.play();
@@ -168,4 +192,51 @@ TEST_CASE("engine process no aloja memoria (rt_guard)") {
     melodeus::core::rt::set_violation_handler(prev);
     CHECK(g_violations.load(std::memory_order_relaxed) == 0);
     CHECK(melodeus::core::rt::violation_count() == before);
+}
+
+TEST_CASE("engine filtro LP/HP corta bandas extremas; bypass pasa senal") {
+    melodeus::audio::Engine engine({48000.0, 512});
+    engine.set_curve(melodeus::audio::CrossfadeCurve::Linear);
+    engine.set_limiter_ceiling_db(0.0);
+    engine.set_master_gain(1.0);
+    const auto hi = make_sine(5000.0, 2.0, 48000.0);
+    const auto lo = make_sine(100.0, 2.0, 48000.0);
+    std::vector<float> l(256);
+    std::vector<float> r(256);
+    const auto warmup = [&](int blocks) {
+        for (int i = 0; i < blocks; ++i) {
+            engine.process(l.data(), r.data(), 256);
+        }
+        return block_peak(l);
+    };
+
+    // Bypass: el 5 kHz pasa (amplitud del sine = 0.5).
+    load_play(engine.deck_a(), hi);
+    engine.set_crossfader(1.0);
+    engine.set_filter_a(0.0);
+    warmup(20);
+    const float pass = warmup(1);
+    CHECK(pass == doctest::Approx(0.5f).epsilon(0.05));
+
+    // LP full (-1, cutoff ~300 Hz): el 5 kHz queda muy atenuado.
+    engine.set_filter_a(-1.0);
+    warmup(40); // suavizado 20 ms + settling
+    const float lp = warmup(1);
+    CHECK(lp < 0.05f);
+
+    // HP full (+1, cutoff ~3 kHz): el 100 Hz queda muy atenuado.
+    engine.set_filter_a(0.0);
+    warmup(40);
+    engine.deck_a().stop();
+    load_play(engine.deck_a(), lo);
+    engine.set_filter_a(1.0);
+    warmup(40);
+    const float hp = warmup(1);
+    CHECK(hp < 0.05f);
+
+    // Bypass de nuevo: el grave vuelve a pasar.
+    engine.set_filter_a(0.0);
+    warmup(40);
+    const float lo_pass = warmup(1);
+    CHECK(lo_pass == doctest::Approx(0.5f).epsilon(0.05));
 }
