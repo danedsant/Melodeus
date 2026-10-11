@@ -82,6 +82,13 @@ else()
     message(WARNING "melodeus: fxc.exe no encontrado; el pase de waveform se omite.")
 endif()
 
+# --- Fuentes UI (Clash Display + JetBrains Mono + Phosphor, F3.6) ----------
+add_custom_command(TARGET melodeus POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/fonts
+        $<TARGET_FILE_DIR:melodeus>/fonts
+    COMMENT "copiando fuentes UI junto al exe")
+
 target_include_directories(melodeus PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(melodeus PRIVATE melodeus_core melodeus_audio melodeus_waveform
     melodeus_analysis melodeus_library melodeus_streaming melodeus_imgui)

@@ -16,6 +16,7 @@
 #include "render/imgui_layer.hpp"
 #include "render/waveform_pass.hpp"
 #include "spike_winsnd.hpp"
+#include "theme.hpp"
 #include "waveform/fft.hpp"
 #include "waveform/waveform.hpp"
 
@@ -332,18 +333,36 @@ std::string wide_to_utf8(const std::wstring& w) {
 /// Barra superior + inferior (estado) alrededor del área de trabajo.
 void draw_chrome(const melodeus::app::RunStats& stats, const wchar_t* adapter, bool vsync,
                  bool selftest, double elapsed, double duration, float width, float scale) {
-    const float top_h = 26.0f * scale;
+    namespace theme = melodeus::app::theme;
+    const float top_h = 28.0f * scale;
     ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
     ImGui::SetNextWindowSize(ImVec2(width, top_h));
     ImGui::Begin("##top", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
-                     ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-    ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.0f, 1.0f), "MELODEUS");
+                     ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
+                     ImGuiWindowFlags_NoBackground);
+    // Barra glass con el wordmark.
+    theme::glass(ImGui::GetWindowDrawList(), ImVec2(6.0f * scale, 3.0f * scale),
+                 ImVec2(width - 6.0f * scale, top_h - 2.0f * scale), 9.0f);
+    if (ImFont* title = melodeus::app::imgui_font_title()) {
+        ImGui::PushFont(title);
+        ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.0f, 1.0f), "MELODEUS");
+        ImGui::PopFont();
+    } else {
+        ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.0f, 1.0f), "MELODEUS");
+    }
     ImGui::SameLine();
-    ImGui::TextDisabled("F3 — biblioteca · analisis · UI");
-    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 320.0f * scale);
-    ImGui::TextDisabled("fps %.1f | %.2f ms | %s | %ls", stats.avg_fps, stats.avg_ms,
-                        vsync ? "vsync" : "novsync", adapter != nullptr ? adapter : L"");
+    ImGui::TextDisabled("F3.6 — UI moderna");
+    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 340.0f * scale);
+    if (ImFont* mono = melodeus::app::imgui_font_mono()) {
+        ImGui::PushFont(mono);
+        ImGui::TextDisabled("fps %.1f | %.2f ms | %s | %ls", stats.avg_fps, stats.avg_ms,
+                            vsync ? "vsync" : "novsync", adapter != nullptr ? adapter : L"");
+        ImGui::PopFont();
+    } else {
+        ImGui::TextDisabled("fps %.1f | %.2f ms | %s | %ls", stats.avg_fps, stats.avg_ms,
+                            vsync ? "vsync" : "novsync", adapter != nullptr ? adapter : L"");
+    }
     if (selftest) {
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.4f, 1.0f), "SELFTEST %.0f/%.0fs", elapsed,
@@ -398,6 +417,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         ::UnregisterClassW(wc.lpszClassName, wc.hInstance);
         return 1;
     }
+    melodeus::app::theme::apply(); // F3.6: tema glass centralizado
 
     const bool have_wave_pass = g_wave_pass.init(g_device);
     if (!have_wave_pass) {
@@ -845,13 +865,17 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         }
         ImGui::End();
 
-        // Espectro + estado (inferior, ancho completo).
+        // Espectro + estado (inferior, ancho completo, barra glass).
         ImGui::SetNextWindowPos(ImVec2(0.0f, body_top + body_h));
         ImGui::SetNextWindowSize(ImVec2(static_cast<float>(width), spectrum_h));
         ImGui::Begin("##bottom", nullptr,
                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
-                         ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar);
+                         ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar |
+                         ImGuiWindowFlags_NoBackground);
         {
+            melodeus::app::theme::glass(
+                ImGui::GetWindowDrawList(), ImVec2(6.0f * scale, 2.0f * scale),
+                ImVec2(static_cast<float>(width) - 6.0f * scale, spectrum_h - 2.0f * scale), 9.0f);
             static melodeus::wave::FftScratch fft(1024);
             static unsigned last_tap_seq = ~0u;
             static float bar_disp[kSpectrumBars]{};

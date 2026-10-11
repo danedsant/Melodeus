@@ -287,6 +287,30 @@ melodeus/
   > filtros con botones de preset, feedback de drop durante el arrastre (highlight
   > más marcado).
 
+- **F3.6 — UI moderna (glassmorphism).** Tema central + tipografía propias, paneles con
+  look "glass", controles restaurados como widgets reales e iconos vectoriales.
+  **DoD:** paleta/tema en un solo sitio, fuentes correctas, look moderno sin regresión
+  (72/72 tests, selftest paced 144 fps / 0 xruns).
+  > **Estado: F3.6 completo.** ✅ **M0 fuentes** en `app/fonts/` (versionadas con el repo;
+  > Clash Display Medium/Semibold para UI/títulos, JetBrains Mono Regular/Medium para
+  > números, Phosphor 2.1.1 regular para iconos; licencias OFL/Future en `LICENSE-*.txt`)
+  > copiadas junto al exe con POST_BUILD en CMake. ✅ **M1 fuentes en ImGui** (`imgui_layer`): 3 fuentes
+  > (`imgui_font_ui` 16 + Phosphor 14 merged, `imgui_font_title` 19, `imgui_font_mono` 15),
+  > rangos acentos+iconos PUA, fallback a default si faltan TTF. ⚠️ Ojo con ImGui 1.92:
+  > `ImFont::FontSize` → `LegacySize`, `AddGlyph` → `AddChar`. ✅ **M2 tema central**
+  > (`app/theme.hpp`): paleta glass (fill/border/highlight), acentos A=azul 86,148,255
+  > / B=naranja 255,150,86, `theme::apply()` tematiza ~30 `ImGuiCol` (fondos transparentes,
+  > el backdrop plano lo aporta el clear), `theme::glass(dl, …)` dibuja panel glass falso
+  > (sombra + hairline + highlight top) y `theme::icons::utf8()` para los iconos. ✅ **M3-M5
+  > paneles reescritos**: biblioteca glass con títulos/mono/iconos (lupa, folder-plus) y A/B
+  > teñidos por acento; decks glass, PLAY/CUE como `ImGui::Button()` con iconos play/pause/
+  > stop-circle, BPM gigante en mono, badge Camelot glass, carriles glass como drop targets;
+  > mixer glass con knobs (valor dB en mono dentro), VU y detente del crossfader; barra
+  > superior/inferior glass con wordmark en title y fps en mono. ✅ Tests 72/72 (60012
+  > aserciones), selftest paced 143.9 fps / 142.2 min1s / 0 xruns. **Nota:** si Clash
+  > Display resulta poco legible en listas, fallback a Clash Grotesk (misma familia).
+  > **Pendiente:** blur real de fondos (M6), scrub/jog, learn de filtros.
+
 - **F5 — Stems ≤ 500 ms.** Export ONNX de `demucs` (MIT), sesión DML con warm-up, chunker
   hop=100ms/overlap 50% con crossfade, `AlignedDelay` de 450ms en el path seco, Stem-EQ de
   4 faders, degradación elegante (GPU → CPU → off con aviso).
