@@ -280,7 +280,10 @@ melodeus/
   > (Shift = fino 0.1 %), C/N CUE, Space stop, F mover biblioteca, / buscar, Esc limpiar.
   > ✅ **Feedback de error visible** en el footer (`audio_spike_last_error`), no sólo
   > printf. ✅ Tests 72/72 (60012 aserciones), selftest paced 144.0 fps / 0 xruns,
-  > build sin warnings. **Pendiente F3.5:** scrub/jog (heredado de F1), learn de
+  > build sin warnings. ✅ Fix: el motor de audio ahora arranca **siempre** (antes
+  > sólo en `--selftest`; en interactivo `audio_spike_load` devolvía false → doble
+  > clic "no hacía nada") y `audio_spike_finish()` se llama al salir en ambos modos
+  > (si no, `std::terminate` por el thread joinable). **Pendiente F3.5:** scrub/jog (heredado de F1), learn de
   > filtros con botones de preset, feedback de drop durante el arrastre (highlight
   > más marcado).
 

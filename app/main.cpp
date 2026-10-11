@@ -421,8 +421,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         std::printf("[SELFTEST] adapter=%ls\n", g_device.adapter_name().c_str());
         std::printf("[SELFTEST] %d s sin vsync%s (objetivo >= 144 fps)...\n", selftest_seconds,
                     paced ? " + paced 144Hz" : "");
-        melodeus::app::audio_spike_start(selftest_seconds);
     }
+    // El motor de audio arranca SIEMPRE (carga/transporte/ondas lo exigen);
+    // en interactivo vive hasta audio_spike_finish() al salir.
+    melodeus::app::audio_spike_start(selftest ? selftest_seconds : 24 * 3600);
 
     FramePacer pacer;
     if (paced) {
@@ -926,6 +928,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
 
     g_device.wait_idle();
 
+    // Siempre: detiene el hilo de audio (si no, el std::thread joinable
+    // destruye el proceso con std::terminate al salir) e imprime el reporte.
+    const int audio_rc = melodeus::app::audio_spike_finish();
+
     int rc = 0;
     if (selftest) {
         RECT client{};
@@ -942,7 +948,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         std::printf("[SELFTEST] fps avg=%.1f min1s=%.1f | frame ms avg=%.2f max=%.2f\n", rs.avg_fps,
                     rs.min_fps_1s, rs.avg_ms, rs.max_ms);
         std::printf("[SELFTEST] ventana 144fps: %s\n", fps_ok ? "OK" : "FAIL");
-        const int audio_rc = melodeus::app::audio_spike_finish();
         rc = (fps_ok && audio_rc == 0) ? 0 : 1;
         std::printf("SELFTEST=%d\n", rc);
     }
