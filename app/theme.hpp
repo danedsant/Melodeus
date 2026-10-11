@@ -31,6 +31,12 @@ inline constexpr ImU32 kSuccess = IM_COL32(72, 200, 120, 255);
 inline constexpr ImU32 kDanger = IM_COL32(240, 90, 80, 255);
 inline constexpr ImU32 kWarn = IM_COL32(240, 200, 90, 255);
 
+// Barra de peak del master (top-right): degradado azul marino -> purple.
+inline constexpr ImU32 kPeakNavy = IM_COL32(18, 32, 92, 255);
+inline constexpr ImU32 kPeakPurple = IM_COL32(178, 60, 240, 255);
+inline constexpr ImU32 kPeakHot = IM_COL32(236, 130, 250, 255); // >0 dBFS clip
+inline constexpr ImU32 kPeakTrack = IM_COL32(40, 46, 62, 200);  // carril vacío
+
 inline constexpr float kRadiusPanel = 12.0f;
 inline constexpr float kRadiusControl = 8.0f;
 inline constexpr float kRadiusGrab = 5.0f;

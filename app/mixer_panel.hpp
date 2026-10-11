@@ -13,9 +13,9 @@ struct MixerState {
     float filter[2] = {0.0f, 0.0f}; ///< -1 = LP full, 0 = bypass, +1 = HP full
 };
 
-/// Dibuja el panel del mixer (lado opuesto a la biblioteca): por canal,
-/// filtro + knobs EQ + gain fader + VU; abajo crossfader y master.
-void draw_mixer_panel(MixerState& state, float peak_a, float peak_b, float master_env,
-                      float width_px, float height_px, float scale);
+/// Dibuja el mixer como columna central vertical (F3.6.x): EQ + FILTRO de
+/// ambos canales arriba, crossfader al medio, master abajo. Sin VUs (el
+/// peak del master vive en la top bar).
+void draw_mixer_panel(MixerState& state, float width_px, float height_px, float scale);
 
 } // namespace melodeus::app

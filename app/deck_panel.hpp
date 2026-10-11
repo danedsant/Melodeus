@@ -34,9 +34,9 @@ struct DeckPanelOut {
     int drop_row = -1; ///< fila de biblioteca soltada en el deck
 };
 
-/// Dibuja el header del deck (PLAY grande, CUE, BPM gigante + pitched,
-/// key Camelot (tradicional), tiempo/restante, título, pitch fader ±8%)
-/// y los dos carriles de onda (drop targets de la biblioteca).
+/// Dibuja el deck en 3 bloques verticales (F3.6.x): display glass (BPM/key/
+/// tiempo/título) arriba, los dos carriles de onda (drop targets) en el medio
+/// y los controles (PLAY, CUE, pitch fader ±8%) abajo.
 DeckPanelOut draw_deck_panel(const DeckUiState& state, int deck_idx, float width_px, float scale);
 
 } // namespace melodeus::app

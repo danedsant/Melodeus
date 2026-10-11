@@ -311,6 +311,26 @@ melodeus/
   > Display resulta poco legible en listas, fallback a Clash Grotesk (misma familia).
   > **Pendiente:** blur real de fondos (M6), scrub/jog, learn de filtros.
 
+- **F3.6.x — Layout DJ simétrico.** Reorganiza la UI al patrón Serato/Rekordbox: deck A a la
+  izquierda y deck B a la derecha (zona superior), mixer como columna central de altura
+  completa, y dos bibliotecas gemelas (browse) debajo de cada deck. El VU vertical y el
+  espectro FFT de la barra inferior se eliminan; el peak del master se muestra como
+  mini-barra horizontal en la top-right.
+  **DoD:** elementos alineados en grid, waveforms en cada deck, peak visible, sin regresión
+  (72/72 tests, selftest paced 144 fps / 0 xruns).
+  > **Estado: completo.** ✅ **Deck panel** reordenado en 3 bloques: display glass (BPM
+  > gigante mono, key Camelot, tiempo, título) → waveform (2 carriles drop-target) →
+  > controles glass (PLAY/CUE botones + pitch fader vertical). ✅ **Mixer** reescrito como
+  > columna central vertical: FILTRO+EQ (HI/MID/LOW) de ambos canales arriba, gains+crossfader
+  > al centro, master abajo; **VUs eliminados**. ✅ **Dos bibliotecas gemelas** (`lib_state`
+  > izq con URL+import, `lib_state_r` der sólo browse) que comparten DB; toggle de lado
+  > eliminado; atajos operan sobre la izquierda. ✅ **Barra de peak del master** en top-right:
+  > degradado navy→purple (`kPeakNavy`→`kPeakPurple`) con pico de retención y lectura dB en
+  > mono. ✅ **Footer inferior** reducido a solo texto de estado (audio OK | db N pistas);
+  > espectro FFT y `kSpectrumBars` eliminados. ✅ Layout grid con gutters compartidos
+  > (deck ~58% / biblio ~42% del alto). ✅ Tests 72/72, selftest paced 144.0 fps / 143.5
+  > min1s / 0 xruns.
+
 - **F5 — Stems ≤ 500 ms.** Export ONNX de `demucs` (MIT), sesión DML con warm-up, chunker
   hop=100ms/overlap 50% con crossfade, `AlignedDelay` de 450ms en el path seco, Stem-EQ de
   4 faders, degradación elegante (GPU → CPU → off con aviso).

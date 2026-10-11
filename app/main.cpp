@@ -1,6 +1,7 @@
-// Melodeus — spike F0/F2/F3: ventana Win32 + ImGui/DX12 con layout DJ de
-// 3 columnas (biblioteca con toggle, decks con BPM/key, mixer), waveform en
-// D3D12, espectro del master y selftest.
+// Melodeus — spike F0/F2/F3: ventana Win32 + ImGui/DX12 con layout DJ
+// simétrico (F3.6.x): deck A | mixer central | deck B, cada deck con su
+// browse debajo; waveform en D3D12, barra de peak del master en la top bar
+// y selftest.
 //
 //   melodeus.exe                  (interactivo, vsync)
 //   melodeus.exe --paced          (sin vsync, pacing 144 Hz por QPC)
@@ -17,7 +18,6 @@
 #include "render/waveform_pass.hpp"
 #include "spike_winsnd.hpp"
 #include "theme.hpp"
-#include "waveform/fft.hpp"
 #include "waveform/waveform.hpp"
 
 #include "audio/decoder.hpp"
@@ -56,7 +56,6 @@ using melodeus::app::DeviceD3D12;
 using melodeus::app::WaveformPass;
 
 constexpr double kDetailSpanSec = 6.0;
-constexpr int kSpectrumBars = 48;
 constexpr std::size_t kInstCap = WaveformPass::kMaxInstances / 4; // por carril
 
 DeviceD3D12 g_device;
@@ -330,9 +329,10 @@ std::string wide_to_utf8(const std::wstring& w) {
     return out;
 }
 
-/// Barra superior + inferior (estado) alrededor del área de trabajo.
+/// Barra superior (estado + peak) alrededor del área de trabajo.
 void draw_chrome(const melodeus::app::RunStats& stats, const wchar_t* adapter, bool vsync,
-                 bool selftest, double elapsed, double duration, float width, float scale) {
+                 bool selftest, double elapsed, double duration, float width, float scale,
+                 float master_peak) {
     namespace theme = melodeus::app::theme;
     const float top_h = 28.0f * scale;
     ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
@@ -341,32 +341,71 @@ void draw_chrome(const melodeus::app::RunStats& stats, const wchar_t* adapter, b
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
                      ImGuiWindowFlags_NoBackground);
+    ImDrawList* dl = ImGui::GetWindowDrawList();
     // Barra glass con el wordmark.
-    theme::glass(ImGui::GetWindowDrawList(), ImVec2(6.0f * scale, 3.0f * scale),
+    theme::glass(dl, ImVec2(6.0f * scale, 3.0f * scale),
                  ImVec2(width - 6.0f * scale, top_h - 2.0f * scale), 9.0f);
     if (ImFont* title = melodeus::app::imgui_font_title()) {
-        ImGui::PushFont(title);
-        ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.0f, 1.0f), "MELODEUS");
-        ImGui::PopFont();
+        dl->AddText(title, title->LegacySize, ImVec2(16.0f * scale, 5.0f * scale), theme::kAccentA,
+                    "MELODEUS");
     } else {
-        ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.0f, 1.0f), "MELODEUS");
+        dl->AddText(ImVec2(16.0f * scale, 6.0f * scale), theme::kAccentA, "MELODEUS");
     }
-    ImGui::SameLine();
-    ImGui::TextDisabled("F3.6 — UI moderna");
-    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 340.0f * scale);
+
+    // --- Barra de peak del master (top-right, degradado navy→purple) -------
+    const float peak_w = 120.0f * scale;
+    const float peak_h = 9.0f * scale;
+    const float peak_x1 = width - 16.0f * scale;
+    const float peak_x0 = peak_x1 - peak_w;
+    const float peak_y0 = (top_h - peak_h) * 0.5f;
+    const ImVec2 pk0 = {peak_x0, peak_y0};
+    const ImVec2 pk1 = {peak_x1, peak_y0 + peak_h};
+    dl->AddRectFilled(pk0, pk1, theme::kPeakTrack, theme::kRadiusGrab);
+    const float lvl = master_peak > 1.0f ? 1.0f : (master_peak < 0.0f ? 0.0f : master_peak);
+    if (lvl > 0.001f) {
+        // Degradado por vértices: navy a la izquierda → purple a la derecha.
+        const float fx = pk0.x + (pk1.x - pk0.x) * lvl;
+        dl->AddRectFilledMultiColor(ImVec2(pk0.x + 1.0f, pk0.y + 1.0f), ImVec2(fx, pk1.y - 1.0f),
+                                    theme::kPeakNavy, theme::kPeakPurple, theme::kPeakPurple,
+                                    theme::kPeakNavy);
+        // Pico de retención (1px) en el nivel máximo reciente.
+        static float hold = 0.0f;
+        static float hold_t = 0.0f;
+        if (lvl >= hold) {
+            hold = lvl;
+            hold_t = static_cast<float>(ImGui::GetTime());
+        } else if (ImGui::GetTime() - hold_t > 1.5) {
+            hold = lvl;
+        }
+        const float hx = pk0.x + (pk1.x - pk0.x) * hold;
+        dl->AddLine(ImVec2(hx, pk0.y - 1.0f), ImVec2(hx, pk1.y + 1.0f), theme::kPeakHot, 1.0f);
+    }
+    // Etiqueta mono (dB) junto a la barra.
     if (ImFont* mono = melodeus::app::imgui_font_mono()) {
-        ImGui::PushFont(mono);
-        ImGui::TextDisabled("fps %.1f | %.2f ms | %s | %ls", stats.avg_fps, stats.avg_ms,
-                            vsync ? "vsync" : "novsync", adapter != nullptr ? adapter : L"");
-        ImGui::PopFont();
-    } else {
-        ImGui::TextDisabled("fps %.1f | %.2f ms | %s | %ls", stats.avg_fps, stats.avg_ms,
-                            vsync ? "vsync" : "novsync", adapter != nullptr ? adapter : L"");
+        const float db = (master_peak > 0.0001f) ? 20.0f * std::log10(master_peak) : -60.0f;
+        char pbuf[16];
+        if (db <= -59.5f) {
+            std::snprintf(pbuf, sizeof(pbuf), "-inf");
+        } else {
+            std::snprintf(pbuf, sizeof(pbuf), "%+.1f", static_cast<double>(db));
+        }
+        const ImVec2 ps = mono->CalcTextSizeA(mono->LegacySize, FLT_MAX, 0.0f, pbuf);
+        dl->AddText(mono, mono->LegacySize, ImVec2(peak_x0 - ps.x - 6.0f * scale, peak_y0 - 2.0f),
+                    theme::kTextDim, pbuf);
     }
+
+    // fps/adapter a la izquierda de la barra de peak.
+    char info[160];
+    std::snprintf(info, sizeof(info), "fps %.1f | %.2f ms | %s | %ls", stats.avg_fps, stats.avg_ms,
+                  vsync ? "vsync" : "novsync", adapter != nullptr ? adapter : L"");
+    const ImVec2 isz = ImGui::CalcTextSize(info);
+    dl->AddText(ImVec2(peak_x0 - isz.x - 16.0f * scale, 6.0f * scale), theme::kTextDim, info);
     if (selftest) {
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.4f, 1.0f), "SELFTEST %.0f/%.0fs", elapsed,
-                           duration);
+        char sbuf[64];
+        std::snprintf(sbuf, sizeof(sbuf), "SELFTEST %.0f/%.0fs", elapsed, duration);
+        const ImVec2 ssz = ImGui::CalcTextSize(sbuf);
+        dl->AddText(ImVec2(peak_x0 - isz.x - 16.0f * scale - ssz.x - 14.0f * scale, 6.0f * scale),
+                    IM_COL32(255, 217, 102, 255), sbuf);
     }
     ImGui::End();
 }
@@ -427,9 +466,18 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     init_demo_library();
     g_stream_tools.ytdlp = std::filesystem::path("external") / "yt-dlp" / "yt-dlp.exe";
     g_stream_tools.ffmpeg = std::filesystem::path("external") / "ffmpeg" / "bin" / "ffmpeg.exe";
-    melodeus::app::LibraryUiState lib_state;
+    // Dos bibliotecas gemelas (F3.6.x): izq = browse A (+URL/import),
+    // der = browse B (sólo browse). Comparten la misma DB.
+    melodeus::app::LibraryUiState lib_state; // izquierda (A)
     lib_state.db = &g_db;
     lib_state.needs_refresh = true;
+    lib_state.show_url = true;    // streaming sólo en la izquierda
+    lib_state.show_folder = true; // import sólo en la izquierda
+    lib_state.accent_a = true;
+    melodeus::app::LibraryUiState lib_state_r; // derecha (B)
+    lib_state_r.db = &g_db;
+    lib_state_r.needs_refresh = true;
+    lib_state_r.accent_a = false;
     melodeus::app::MixerState mixer;
 
     ::ShowWindow(g_hwnd, SW_SHOWDEFAULT);
@@ -514,14 +562,28 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         const bool audio_on = melodeus::app::audio_spike_view(&view);
 
         draw_chrome(live, g_device.adapter_name().c_str(), vsync, selftest, now,
-                    static_cast<double>(selftest_seconds), static_cast<float>(width), scale);
+                    static_cast<double>(selftest_seconds), static_cast<float>(width), scale,
+                    view.master_env);
 
-        // Cuerpo: [library | decks | mixer] con toggle de lado.
-        const float lib_w = 340.0f * scale;
-        const float mix_w = 260.0f * scale;
-        const float spectrum_h = 96.0f * scale;
-        const float body_top = 26.0f * scale;
-        const float body_h = static_cast<float>(height) - body_top - spectrum_h;
+        // ===================================================================
+        // Layout DJ simétrico (F3.6.x):
+        //   [ DECK A | MIXER | DECK B ]   zona superior
+        //   [ BIBLIO | (mixer) | BIBLIO ]  zona inferior
+        // La columna del mixer ocupa altura completa; cada deck tiene su
+        // browse debajo. Alineación por grid de gutters.
+        // ===================================================================
+        const float gutter = 8.0f * scale;
+        const float margin = 6.0f * scale;
+        const float mix_w = 240.0f * scale;
+        const float footer_h = 22.0f * scale;
+        const float body_top = 28.0f * scale;
+        const float body_h = static_cast<float>(height) - body_top - footer_h;
+        const float content_w = static_cast<float>(width) - margin * 2.0f;
+        const float side_w = (content_w - mix_w - gutter * 2.0f) * 0.5f;
+        // Reparto vertical: deck ~58%, biblioteca ~42%.
+        const float deck_h = body_h * 0.58f;
+        const float lib_h = body_h - deck_h - gutter;
+
         ImGui::SetNextWindowPos(ImVec2(0.0f, body_top));
         ImGui::SetNextWindowSize(ImVec2(static_cast<float>(width), body_h));
         ImGui::Begin("##body", nullptr,
@@ -530,174 +592,161 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
                          ImGuiWindowFlags_NoScrollWithMouse);
 
         RECT deck_rects[2][2]{}; // [deck][0=overview,1=detail]
-        melodeus::app::LibraryAction lib_action = melodeus::app::LibraryAction::None;
+        melodeus::app::LibraryAction lib_actions[2] = {melodeus::app::LibraryAction::None,
+                                                       melodeus::app::LibraryAction::None};
 
-        // Carga una fila de la biblioteca en un deck con feedback visible.
-        const auto load_row_to_deck = [&](int deck, int row_idx) {
-            if (row_idx < 0 || row_idx >= static_cast<int>(lib_state.rows.size())) {
+        // Carga una fila de una biblioteca en un deck con feedback visible.
+        const auto load_row = [&](melodeus::app::LibraryUiState& st, int deck, int row_idx) {
+            if (row_idx < 0 || row_idx >= static_cast<int>(st.rows.size())) {
                 return;
             }
-            const auto& row = lib_state.rows[static_cast<std::size_t>(row_idx)];
-            lib_state.selected = row_idx;
+            const auto& row = st.rows[static_cast<std::size_t>(row_idx)];
+            st.selected = row_idx;
             if (melodeus::app::audio_spike_load(deck, row.uri.c_str(), row.title.c_str())) {
-                std::snprintf(lib_state.status, sizeof(lib_state.status), "deck %s <- %s",
-                              deck == 0 ? "A" : "B", row.title.c_str());
+                std::snprintf(st.status, sizeof(st.status), "deck %s <- %s", deck == 0 ? "A" : "B",
+                              row.title.c_str());
             } else {
                 const char* err = melodeus::app::audio_spike_last_error();
-                std::snprintf(lib_state.status, sizeof(lib_state.status), "%s",
+                std::snprintf(st.status, sizeof(st.status), "%s",
                               (err != nullptr && err[0] != '\0') ? err : "carga falló");
             }
         };
 
-        const auto draw_library = [&]() {
-            ImGui::BeginChild("##libcol", ImVec2(lib_w, body_h - 8.0f * scale), false);
-            lib_action =
-                melodeus::app::draw_library_panel(lib_state, lib_w, body_h - 8.0f * scale, scale);
-            ImGui::EndChild();
-        };
-        const auto draw_mixer = [&]() {
-            ImGui::BeginChild("##mixcol", ImVec2(mix_w, body_h - 8.0f * scale), false);
-            melodeus::app::draw_mixer_panel(mixer, view.peak_a, view.peak_b, view.master_env, mix_w,
-                                            body_h - 8.0f * scale, scale);
-            ImGui::EndChild();
-        };
-
-        if (lib_state.on_left) {
-            draw_library();
-            ImGui::SameLine();
-        } else {
-            draw_mixer();
-            ImGui::SameLine(0.0f, 8.0f * scale);
-        }
-
-        // Decks (centro).
-        {
-            const ImVec2 mn = ImGui::GetCursorScreenPos();
-            const float decks_w =
-                ImGui::GetContentRegionAvail().x -
-                (lib_state.on_left ? mix_w + 16.0f * scale : lib_w + 16.0f * scale) - 8.0f * scale;
-            ImGui::BeginChild("##decks", ImVec2(decks_w, body_h - 8.0f * scale), false);
-            for (int d = 0; d < 2; ++d) {
-                melodeus::app::DeckUiState ds;
-                ds.title = (d == 0) ? view.title_a : view.title_b;
-                ds.artist = "";
-                ds.bpm = (d == 0) ? 128.0 : 0.0; // placeholder hasta metadata
-                const double pitch = (d == 0) ? view.pitch_a_pct : view.pitch_b_pct;
-                ds.bpm_pitched = ds.bpm * (1.0 + pitch / 100.0);
-                ds.camelot = 0;
-                ds.key_name = "";
-                ds.position_sec = (d == 0) ? view.deck_a_seconds : view.deck_b_seconds;
-                ds.duration_sec = (d == 0) ? view.duration_a_seconds : view.duration_b_seconds;
-                ds.playing = (d == 0) ? view.playing_a : view.playing_b;
-                ds.pitch_pct = pitch;
-
-                // BPM/key reales desde la DB si la pista cargada está
-                // importada (match por título; cachear por cambio de título).
-                static std::string cached_title[2];
-                static melodeus::library::TrackMeta cached_meta[2];
-                const char* title = ds.title;
-                if (title != nullptr && title[0] != '\0') {
-                    if (cached_title[static_cast<std::size_t>(d)] != title) {
-                        cached_title[static_cast<std::size_t>(d)] = title;
-                        const auto rows = g_db.search(title, 4);
-                        cached_meta[static_cast<std::size_t>(d)] = {};
-                        for (const auto& row : rows) {
-                            if (row.title == title) {
-                                cached_meta[static_cast<std::size_t>(d)] = row;
-                                break;
-                            }
+        // Rellena el DeckUiState (BPM/key desde la DB, cacheado por título).
+        const auto fill_deck_state = [&](int d, melodeus::app::DeckUiState& ds) {
+            ds.title = (d == 0) ? view.title_a : view.title_b;
+            ds.artist = "";
+            ds.bpm = (d == 0) ? 128.0 : 0.0;
+            const double pitch = (d == 0) ? view.pitch_a_pct : view.pitch_b_pct;
+            ds.bpm_pitched = ds.bpm * (1.0 + pitch / 100.0);
+            ds.camelot = 0;
+            ds.key_name = "";
+            ds.position_sec = (d == 0) ? view.deck_a_seconds : view.deck_b_seconds;
+            ds.duration_sec = (d == 0) ? view.duration_a_seconds : view.duration_b_seconds;
+            ds.playing = (d == 0) ? view.playing_a : view.playing_b;
+            ds.pitch_pct = pitch;
+            static std::string cached_title[2];
+            static melodeus::library::TrackMeta cached_meta[2];
+            const char* title = ds.title;
+            if (title != nullptr && title[0] != '\0') {
+                if (cached_title[static_cast<std::size_t>(d)] != title) {
+                    cached_title[static_cast<std::size_t>(d)] = title;
+                    const auto rows = g_db.search(title, 4);
+                    cached_meta[static_cast<std::size_t>(d)] = {};
+                    for (const auto& row : rows) {
+                        if (row.title == title) {
+                            cached_meta[static_cast<std::size_t>(d)] = row;
+                            break;
                         }
                     }
-                    const melodeus::library::TrackMeta& m =
-                        cached_meta[static_cast<std::size_t>(d)];
-                    if (m.track_id > 0) {
-                        ds.bpm = m.bpm;
-                        ds.bpm_pitched = ds.bpm * (1.0 + pitch / 100.0);
-                        ds.camelot = m.camelot;
-                        ds.camelot_minor = m.camelot_minor;
-                        ds.key_name = m.musical_key.c_str();
-                    }
                 }
-
-                const float deck_w = decks_w - 16.0f * scale;
-                const melodeus::app::DeckPanelOut dres =
-                    melodeus::app::draw_deck_panel(ds, d, deck_w, scale);
-                if (dres.play_toggled) {
-                    melodeus::app::audio_spike_toggle_play(d);
-                }
-                if (dres.cue_pressed) {
-                    melodeus::app::audio_spike_seek(d, 0.0);
-                }
-                if (dres.pitch_changed) {
-                    melodeus::app::audio_spike_set_pitch(d, static_cast<float>(dres.pitch_new));
-                }
-                if (dres.drop_row >= 0) {
-                    load_row_to_deck(d, dres.drop_row);
-                }
-                deck_rects[d][0] = dres.rects.overview;
-                deck_rects[d][1] = dres.rects.detail;
-                if (d == 0) {
-                    ImGui::Dummy(ImVec2(0.0f, 10.0f * scale));
+                const melodeus::library::TrackMeta& m = cached_meta[static_cast<std::size_t>(d)];
+                if (m.track_id > 0) {
+                    ds.bpm = m.bpm;
+                    ds.bpm_pitched = ds.bpm * (1.0 + pitch / 100.0);
+                    ds.camelot = m.camelot;
+                    ds.camelot_minor = m.camelot_minor;
+                    ds.key_name = m.musical_key.c_str();
                 }
             }
+        };
+
+        // Una columna de deck (arriba) + browse (abajo).
+        const auto draw_deck_column = [&](int d, const char* child_id, float x, float y,
+                                          melodeus::app::LibraryUiState& lib) {
+            ImGui::SetCursorScreenPos(ImVec2(x, y));
+            ImGui::BeginChild(child_id, ImVec2(side_w, deck_h), false);
+            melodeus::app::DeckUiState ds;
+            fill_deck_state(d, ds);
+            const melodeus::app::DeckPanelOut dres =
+                melodeus::app::draw_deck_panel(ds, d, side_w, scale);
+            if (dres.play_toggled) {
+                melodeus::app::audio_spike_toggle_play(d);
+            }
+            if (dres.cue_pressed) {
+                melodeus::app::audio_spike_seek(d, 0.0);
+            }
+            if (dres.pitch_changed) {
+                melodeus::app::audio_spike_set_pitch(d, static_cast<float>(dres.pitch_new));
+            }
+            if (dres.drop_row >= 0) {
+                load_row(lib, d, dres.drop_row);
+            }
+            deck_rects[d][0] = dres.rects.overview;
+            deck_rects[d][1] = dres.rects.detail;
             ImGui::EndChild();
-            (void)mn;
-        }
 
-        if (lib_state.on_left) {
-            ImGui::SameLine(0.0f, 8.0f * scale);
-            draw_mixer();
-        } else {
-            ImGui::SameLine(0.0f, 8.0f * scale);
-            draw_library();
-        }
+            // Browse debajo del deck.
+            const float lib_y = y + deck_h + gutter;
+            ImGui::SetCursorScreenPos(ImVec2(x, lib_y));
+            ImGui::BeginChild((std::string(child_id) + "lib").c_str(), ImVec2(side_w, lib_h),
+                              false);
+            lib_actions[d] = melodeus::app::draw_library_panel(lib, side_w, lib_h, scale);
+            ImGui::EndChild();
+        };
 
-        // Acciones de la biblioteca (carga en deck).
-        if (lib_action == melodeus::app::LibraryAction::LoadDeckA ||
-            lib_action == melodeus::app::LibraryAction::LoadDeckB) {
-            const int deck = (lib_action == melodeus::app::LibraryAction::LoadDeckA) ? 0 : 1;
-            load_row_to_deck(deck, lib_state.selected);
-        }
-        // "+ carpeta": import en background (hilo con su propia conexión WAL).
-        if (lib_action == melodeus::app::LibraryAction::AddFolder && !g_import.running()) {
-            const auto folder = pick_folder();
-            if (!folder.empty() && !g_db_path.empty()) {
-                std::printf("[f3] importando carpeta: %s\n", folder.string().c_str());
-                g_import.start(g_db_path, folder, /*recursive=*/true);
+        // --- Columna izquierda: DECK A + biblioteca A -----------------------
+        draw_deck_column(0, "##deckA", margin, 0.0f, lib_state);
+
+        // --- Columna central: MIXER (altura completa) -----------------------
+        ImGui::SetCursorScreenPos(ImVec2(margin + side_w + gutter, 0.0f));
+        ImGui::BeginChild("##mixcol", ImVec2(mix_w, body_h), false);
+        melodeus::app::draw_mixer_panel(mixer, mix_w, body_h, scale);
+        ImGui::EndChild();
+
+        // --- Columna derecha: DECK B + biblioteca B -------------------------
+        draw_deck_column(1, "##deckB", margin + side_w + gutter + mix_w + gutter, 0.0f,
+                         lib_state_r);
+
+        // Acciones de las bibliotecas (carga en deck). Cada panel recarga a
+        // su deck vecino por doble-click o a cualquiera vía botones A/B.
+        for (int li = 0; li < 2; ++li) {
+            melodeus::app::LibraryUiState& st = (li == 0) ? lib_state : lib_state_r;
+            const melodeus::app::LibraryAction act = lib_actions[li];
+            if (act == melodeus::app::LibraryAction::LoadDeckA ||
+                act == melodeus::app::LibraryAction::LoadDeckB) {
+                const int deck = (act == melodeus::app::LibraryAction::LoadDeckA) ? 0 : 1;
+                load_row(st, deck, st.selected);
             }
-        }
-        // URL (streaming F4): descarga en hilo propio → staging al deck A.
-        if (lib_action == melodeus::app::LibraryAction::LoadUrl &&
-            g_url_phase.load(std::memory_order_acquire) == 0) {
-            const std::string url(lib_state.url);
-            std::thread([url] {
-                std::snprintf(g_url_msg, sizeof(g_url_msg), "descargando...");
-                g_url_phase.store(1, std::memory_order_release);
-                const auto res =
-                    melodeus::streaming::load_url_blocking(g_stream_cache, g_stream_tools, url);
-                if (!res.ok()) {
-                    std::snprintf(g_url_msg, sizeof(g_url_msg), "URL: %s", res.error.c_str());
-                    g_url_phase.store(3, std::memory_order_release);
-                    return;
+            if (act == melodeus::app::LibraryAction::AddFolder && !g_import.running()) {
+                const auto folder = pick_folder();
+                if (!folder.empty() && !g_db_path.empty()) {
+                    std::printf("[f3] importando carpeta: %s\n", folder.string().c_str());
+                    g_import.start(g_db_path, folder, /*recursive=*/true);
                 }
-                bool staged = false;
-                for (int i = 0; i < 200 && !staged; ++i) {
-                    staged = melodeus::app::audio_spike_load_samples(
-                        0, res.track.samples.data(), res.track.frames, res.track.channels,
-                        res.track.sample_rate, res.title.c_str());
-                    if (!staged) {
-                        ::Sleep(20); // espera a que se aplique la carga anterior
+            }
+            if (act == melodeus::app::LibraryAction::LoadUrl &&
+                g_url_phase.load(std::memory_order_acquire) == 0) {
+                const std::string url(st.url);
+                std::thread([url] {
+                    std::snprintf(g_url_msg, sizeof(g_url_msg), "descargando...");
+                    g_url_phase.store(1, std::memory_order_release);
+                    const auto res =
+                        melodeus::streaming::load_url_blocking(g_stream_cache, g_stream_tools, url);
+                    if (!res.ok()) {
+                        std::snprintf(g_url_msg, sizeof(g_url_msg), "URL: %s", res.error.c_str());
+                        g_url_phase.store(3, std::memory_order_release);
+                        return;
                     }
-                }
-                const double secs =
-                    (res.track.sample_rate > 0.0)
-                        ? static_cast<double>(res.track.frames) / res.track.sample_rate
-                        : 0.0;
-                std::snprintf(g_url_msg, sizeof(g_url_msg), "%s: %s (%.0fs)%s",
-                              staged ? "cargado" : "staging ocupado", res.title.c_str(), secs,
-                              res.from_cache ? " [cache]" : "");
-                g_url_phase.store(staged ? 2 : 3, std::memory_order_release);
-            }).detach();
+                    bool staged = false;
+                    for (int i = 0; i < 200 && !staged; ++i) {
+                        staged = melodeus::app::audio_spike_load_samples(
+                            0, res.track.samples.data(), res.track.frames, res.track.channels,
+                            res.track.sample_rate, res.title.c_str());
+                        if (!staged) {
+                            ::Sleep(20); // espera a que se aplique la carga anterior
+                        }
+                    }
+                    const double secs =
+                        (res.track.sample_rate > 0.0)
+                            ? static_cast<double>(res.track.frames) / res.track.sample_rate
+                            : 0.0;
+                    std::snprintf(g_url_msg, sizeof(g_url_msg), "%s: %s (%.0fs)%s",
+                                  staged ? "cargado" : "staging ocupado", res.title.c_str(), secs,
+                                  res.from_cache ? " [cache]" : "");
+                    g_url_phase.store(staged ? 2 : 3, std::memory_order_release);
+                }).detach();
+            }
         }
         // Progreso del import: status en el footer + refresh al terminar.
         {
@@ -741,7 +790,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
                 melodeus::app::audio_spike_set_filter(ch, mixer.filter[ch]);
             }
         }
-        // Atajos de teclado (F3.5); no interfieren al escribir en un campo.
+        // Atajos de teclado (F3.5); operan sobre la biblioteca izquierda (A).
+        // No interfieren al escribir en un campo.
         if (!ImGui::GetIO().WantTextInput) {
             if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, false)) {
                 lib_state.move_selection(-1);
@@ -752,13 +802,13 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             const bool shift = ImGui::GetIO().KeyShift;
             if (ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
                 ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)) {
-                load_row_to_deck(shift ? 1 : 0, lib_state.selected);
+                load_row(lib_state, shift ? 1 : 0, lib_state.selected);
             }
             if (ImGui::IsKeyPressed(ImGuiKey_1, false)) {
-                load_row_to_deck(0, lib_state.selected);
+                load_row(lib_state, 0, lib_state.selected);
             }
             if (ImGui::IsKeyPressed(ImGuiKey_2, false)) {
-                load_row_to_deck(1, lib_state.selected);
+                load_row(lib_state, 1, lib_state.selected);
             }
             if (ImGui::IsKeyPressed(ImGuiKey_Q, false)) {
                 melodeus::app::audio_spike_toggle_play(0);
@@ -796,9 +846,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
                 if (view.playing_b) {
                     melodeus::app::audio_spike_toggle_play(1);
                 }
-            }
-            if (ImGui::IsKeyPressed(ImGuiKey_F, false)) {
-                lib_state.on_left = !lib_state.on_left;
             }
             if (ImGui::IsKeyPressed(ImGuiKey_Slash, false)) {
                 lib_state.focus_search = true;
@@ -865,56 +912,32 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         }
         ImGui::End();
 
-        // Espectro + estado (inferior, ancho completo, barra glass).
+        // Footer inferior: sólo texto de estado (espectro y VU eliminados
+        // en F3.6.x; el peak del master vive en la top bar).
         ImGui::SetNextWindowPos(ImVec2(0.0f, body_top + body_h));
-        ImGui::SetNextWindowSize(ImVec2(static_cast<float>(width), spectrum_h));
+        ImGui::SetNextWindowSize(ImVec2(static_cast<float>(width), footer_h));
         ImGui::Begin("##bottom", nullptr,
                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                          ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar |
                          ImGuiWindowFlags_NoBackground);
         {
-            melodeus::app::theme::glass(
-                ImGui::GetWindowDrawList(), ImVec2(6.0f * scale, 2.0f * scale),
-                ImVec2(static_cast<float>(width) - 6.0f * scale, spectrum_h - 2.0f * scale), 9.0f);
-            static melodeus::wave::FftScratch fft(1024);
-            static unsigned last_tap_seq = ~0u;
-            static float bar_disp[kSpectrumBars]{};
-            if (view.tap != nullptr && view.tap_len >= 128 && view.tap_seq != last_tap_seq) {
-                last_tap_seq = view.tap_seq;
-                fft.compute(view.tap, view.tap_len);
-                const float* mag = fft.magnitudes();
-                const int bins = fft.bins();
-                float peak = 1e-9f;
-                for (int i = 1; i < bins; ++i) {
-                    peak = (std::max)(peak, mag[i]);
-                }
-                for (int b = 0; b < kSpectrumBars; ++b) {
-                    const float t0b = static_cast<float>(b) / kSpectrumBars;
-                    const float t1b = static_cast<float>(b + 1) / kSpectrumBars;
-                    const int i0 = 1 + static_cast<int>((bins - 2) * t0b * t0b);
-                    const int i1 = 1 + static_cast<int>((bins - 2) * t1b * t1b);
-                    float m = 0.0f;
-                    for (int i = i0; i < i1 && i < bins; ++i) {
-                        m = (std::max)(m, mag[i]);
-                    }
-                    const float target = m / peak;
-                    bar_disp[b] = (target > bar_disp[b]) ? target : bar_disp[b] * 0.85f;
-                }
-            }
             ImDrawList* dl = ImGui::GetWindowDrawList();
-            const ImVec2 sp0 = ImGui::GetCursorScreenPos();
-            const float sp_h = spectrum_h - 22.0f * scale;
-            const float bw = static_cast<float>(width) / kSpectrumBars;
-            for (int b = 0; b < kSpectrumBars; ++b) {
-                const float h = bar_disp[b] * sp_h;
-                const ImU32 col = IM_COL32(static_cast<int>(40 + 200 * bar_disp[b]),
-                                           static_cast<int>(180 - 100 * bar_disp[b]), 60, 255);
-                dl->AddRectFilled(ImVec2(sp0.x + bw * b + 1.0f, sp0.y + sp_h - h),
-                                  ImVec2(sp0.x + bw * (b + 1) - 1.0f, sp0.y + sp_h), col);
+            const char* status =
+                lib_state.status[0] != '\0' ? lib_state.status : lib_state_r.status;
+            if (status[0] != '\0') {
+                dl->AddText(ImVec2(8.0f * scale, 4.0f * scale), IM_COL32(165, 178, 200, 255),
+                            status);
+            } else {
+                const char* txt = audio_on ? "audio OK" : "audio --";
+                dl->AddText(ImVec2(8.0f * scale, 4.0f * scale),
+                            audio_on ? IM_COL32(72, 200, 120, 255) : IM_COL32(140, 148, 162, 255),
+                            txt);
             }
-            ImGui::Dummy(ImVec2(0.0f, sp_h));
-            ImGui::TextDisabled("estado: audio %s | db %d pistas | %s", audio_on ? "OK" : "--",
-                                g_db.count(), lib_state.on_left ? "biblio izq" : "biblio der");
+            char dbbuf[64];
+            std::snprintf(dbbuf, sizeof(dbbuf), "db %d pistas", g_db.count());
+            const ImVec2 dsz = ImGui::CalcTextSize(dbbuf);
+            dl->AddText(ImVec2(static_cast<float>(width) - dsz.x - 8.0f * scale, 4.0f * scale),
+                        IM_COL32(140, 148, 162, 255), dbbuf);
         }
         ImGui::End();
 

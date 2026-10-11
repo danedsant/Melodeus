@@ -15,17 +15,6 @@ namespace {
 constexpr float kKnobMinDb = -26.0f;
 constexpr float kKnobMaxDb = 6.0f;
 
-void draw_vu(ImDrawList* dl, const ImVec2& mn, const ImVec2& mx, float level) {
-    dl->AddRectFilled(mn, mx, IM_COL32(28, 31, 38, 120), 3.0f);
-    if (level <= 0.0f) {
-        return;
-    }
-    const float h = (mx.y - mn.y) * (level > 1.0f ? 1.0f : level);
-    const ImU32 col =
-        level > 0.95f ? theme::kDanger : (level > 0.7f ? theme::kWarn : theme::kSuccess);
-    dl->AddRectFilled(ImVec2(mn.x, mx.y - h), mx, col, 3.0f);
-}
-
 /// Knob circular glass: arrastre vertical; doble-click = reset. Devuelve
 /// true si el valor cambió.
 bool knob(const char* id, float* v, float v_min, float v_max, float reset_v, float radius,
@@ -110,8 +99,7 @@ void knob_labeled(const char* id, const char* label, float* v, float v_min, floa
 
 } // namespace
 
-void draw_mixer_panel(MixerState& state, float peak_a, float peak_b, float master_env,
-                      float width_px, float height_px, float scale) {
+void draw_mixer_panel(MixerState& state, float width_px, float height_px, float scale) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImVec2 mn = ImGui::GetCursorScreenPos();
     const ImVec2 mx = {mn.x + width_px, mn.y + height_px};
@@ -123,25 +111,20 @@ void draw_mixer_panel(MixerState& state, float peak_a, float peak_b, float maste
         dl->AddText(ImVec2(mn.x + 12.0f * scale, mn.y + 6.0f * scale), theme::kText, "MIXER");
     }
 
-    // --- Canales A y B: Filtro, EQ (HI/MID/LOW), gain + VU -----------------
-    const float top = mn.y + 30.0f * scale;
-    const float col_w = width_px * 0.5f;
-    const float knob_r = 14.0f * scale;
-    const float bottom_reserve = 120.0f * scale;
-    const float chan_h = mn.y + height_px - bottom_reserve - top;
-    const float fader_h = chan_h - (knob_r * 2.0f + 16.0f * scale) * 4.0f - 24.0f * scale;
+    // Columna central vertical: [EQ + FILTRO por canal] -> [crossfader] ->
+    // [master]. Sin VUs (el peak vive en la top bar).
+    const float top = mn.y + 32.0f * scale;
+    const float inner_x = mn.x + 12.0f * scale;
+    const float inner_w = width_px - 24.0f * scale;
+    const float knob_r = 13.0f * scale;
+    const float col_w = inner_w * 0.5f;
 
+    // --- Canales A y B: FILTRO + EQ (HI/MID/LOW) en rejilla 2x4 -----------
     for (int ch = 0; ch < 2; ++ch) {
-        const float x0 = mn.x + col_w * static_cast<float>(ch);
-        float* gain = (ch == 0) ? &state.ch_gain_a : &state.ch_gain_b;
-        const float peak = (ch == 0) ? peak_a : peak_b;
+        const float x0 = inner_x + col_w * static_cast<float>(ch);
         ImGui::PushID(ch);
-
-        // Filtro DJ (LP <-> HP).
-        ImGui::SetCursorScreenPos(ImVec2(x0 + 10.0f * scale, top));
+        ImGui::SetCursorScreenPos(ImVec2(x0 + (col_w - knob_r * 2.0f) * 0.5f, top));
         knob_labeled("##flt", "FILTRO", &state.filter[ch], -1.0f, 1.0f, 0.0f, knob_r, scale, false);
-
-        // EQ: HI / MID / LOW (doble-click = 0 dB; valor dB dentro del knob).
         for (int b = 0; b < 3; ++b) {
             const char* lbl = (b == 0) ? "LOW" : ((b == 1) ? "MID" : "HI");
             char id[16];
@@ -149,26 +132,21 @@ void draw_mixer_panel(MixerState& state, float peak_a, float peak_b, float maste
             knob_labeled(id, lbl, &state.eq_db[ch][b], kKnobMinDb, kKnobMaxDb, 0.0f, knob_r, scale,
                          true);
         }
-
-        // Gain fader + VU.
-        const float f_top = ImGui::GetCursorScreenPos().y;
-        const float fh = fader_h > 40.0f * scale ? fader_h : 40.0f * scale;
-        ImGui::SetCursorScreenPos(ImVec2(x0 + 10.0f * scale, f_top));
-        ImGui::VSliderFloat(ch == 0 ? "##gain_a" : "##gain_b", ImVec2(28.0f * scale, fh), gain,
-                            0.0f, 1.0f, "");
-        const ImVec2 vu0 = {x0 + 44.0f * scale, f_top};
-        const ImVec2 vu1 = {x0 + 56.0f * scale, f_top + fh};
-        draw_vu(dl, vu0, vu1, peak);
-
-        dl->AddText(ImVec2(x0 + 10.0f * scale, f_top + fh + 4.0f * scale), theme::kTextDim,
-                    ch == 0 ? "A" : "B");
         ImGui::PopID();
     }
+    const float xf_top = ImGui::GetCursorScreenPos().y + 8.0f * scale;
 
-    // --- Crossfader + master ----------------------------------------------
-    const float xf_y = mn.y + height_px - bottom_reserve;
-    ImGui::SetCursorScreenPos(ImVec2(mn.x + 16.0f * scale, xf_y));
-    ImGui::SetNextItemWidth(width_px - 32.0f * scale);
+    // --- Gains de canal (faders cortos) + crossfader ----------------------
+    // Fila: [gain A] [crossfader] [gain B], alineada y centrada verticalmente.
+    const float fader_h = 56.0f * scale;
+    const float gain_w = 26.0f * scale;
+    const float xf_y = xf_top;
+    ImGui::SetCursorScreenPos(ImVec2(inner_x, xf_y));
+    ImGui::VSliderFloat("##gain_a", ImVec2(gain_w, fader_h), &state.ch_gain_a, 0.0f, 1.0f, "");
+    const float xf_x = inner_x + gain_w + 8.0f * scale;
+    const float xf_w = inner_w - gain_w * 2.0f - 16.0f * scale;
+    ImGui::SetCursorScreenPos(ImVec2(xf_x, xf_y + (fader_h - 20.0f) * 0.5f));
+    ImGui::SetNextItemWidth(xf_w);
     ImGui::SliderFloat("##xf", &state.crossfader, 0.0f, 1.0f, "");
     // Detente central del crossfader.
     {
@@ -178,26 +156,24 @@ void draw_mixer_panel(MixerState& state, float peak_a, float peak_b, float maste
         dl->AddLine(ImVec2(cx, x0.y - 2.0f * scale), ImVec2(cx, x0.y + 1.0f * scale),
                     theme::kTextDim, 1.0f);
     }
-    dl->AddText(ImVec2(mn.x + 16.0f * scale, xf_y + 24.0f * scale), theme::kTextDim, "B");
+    // Etiquetas A / CROSS / B.
+    const float lbl_y = xf_y + (fader_h - 20.0f) * 0.5f + 22.0f * scale;
+    const ImVec2 asz = ImGui::CalcTextSize("A");
+    const ImVec2 bsz = ImGui::CalcTextSize("B");
+    dl->AddText(ImVec2(inner_x + (gain_w - bsz.x) * 0.5f, lbl_y), theme::kAccentA, "B");
     const char* xf_label = "CROSS";
     const ImVec2 xfs = ImGui::CalcTextSize(xf_label);
-    dl->AddText(ImVec2(mn.x + (width_px - xfs.x) * 0.5f, xf_y + 24.0f * scale), theme::kTextDim,
-                xf_label);
-    const ImVec2 asz_m = ImGui::CalcTextSize("A");
-    dl->AddText(ImVec2(mn.x + width_px - 16.0f * scale - asz_m.x, xf_y + 24.0f * scale),
-                theme::kTextDim, "A");
+    dl->AddText(ImVec2(xf_x + (xf_w - xfs.x) * 0.5f, lbl_y), theme::kTextDim, xf_label);
+    const float gain_b_x = inner_x + inner_w - gain_w;
+    dl->AddText(ImVec2(gain_b_x + (gain_w - asz.x) * 0.5f, lbl_y), theme::kAccentB, "A");
+    ImGui::SetCursorScreenPos(ImVec2(gain_b_x, xf_y));
+    ImGui::VSliderFloat("##gain_b", ImVec2(gain_w, fader_h), &state.ch_gain_b, 0.0f, 1.0f, "");
 
-    // Master + VU del master.
-    const float master_y = xf_y + 54.0f * scale;
-    ImGui::SetCursorScreenPos(ImVec2(mn.x + 16.0f * scale, master_y));
-    ImGui::SetNextItemWidth(width_px - 90.0f * scale);
+    // --- Master (parte inferior, ancho completo) --------------------------
+    const float master_y = xf_y + fader_h + 28.0f * scale;
+    ImGui::SetCursorScreenPos(ImVec2(inner_x, master_y));
+    ImGui::SetNextItemWidth(inner_w);
     ImGui::SliderFloat("##master", &state.master, 0.0f, 1.0f, "master %.2f");
-    const ImVec2 mvu0 = {mn.x + width_px - 62.0f * scale, master_y};
-    const ImVec2 mvu1 = {mn.x + width_px - 40.0f * scale, master_y + 22.0f * scale};
-    draw_vu(dl, mvu0, mvu1, master_env);
-    const ImVec2 gr0 = {mn.x + width_px - 34.0f * scale, master_y};
-    const ImVec2 gr1 = {mn.x + width_px - 16.0f * scale, master_y + 22.0f * scale};
-    draw_vu(dl, gr0, gr1, master_env > 0.0f ? 1.0f - master_env : 0.0f);
 }
 
 } // namespace melodeus::app
