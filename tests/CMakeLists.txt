@@ -4,9 +4,12 @@ add_executable(melodeus_tests
     test_prealloc_pool.cpp
     test_rt_guard.cpp
     test_log_rt.cpp
+    test_decoder.cpp
+    test_deck.cpp
+    test_engine.cpp
 )
 
-target_link_libraries(melodeus_tests PRIVATE melodeus_core)
+target_link_libraries(melodeus_tests PRIVATE melodeus_core melodeus_audio)
 target_include_directories(melodeus_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/external/doctest/doctest
 )

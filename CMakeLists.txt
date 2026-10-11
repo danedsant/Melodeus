@@ -48,6 +48,9 @@ target_compile_definitions(melodeus_core PUBLIC
 )
 melodeus_set_warnings(melodeus_core)
 
+# ------------------------------------------------------------------ audio
+add_subdirectory(src/audio)
+
 # ------------------------------------------------------------------ tests
 if(MELODEUS_BUILD_TESTS)
     enable_testing()

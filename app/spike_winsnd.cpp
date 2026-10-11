@@ -2,46 +2,103 @@
 
 #include <juce_audio_devices/juce_audio_devices.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <string>
 #include <thread>
 #include <utility>
 
+#include "audio/decoder.hpp"
+#include "audio/engine.hpp"
+
 namespace melodeus::app {
 namespace {
 
-constexpr double kToneHz = 440.0;
 constexpr double kPi = 3.14159265358979323846;
 
-struct ToneCallback final : juce::AudioIODeviceCallback {
+audio::DecodedTrack make_sine(double hz, double secs, double rate) {
+    audio::DecodedTrack t;
+    t.channels = 2;
+    t.sample_rate = rate;
+    t.frames = static_cast<std::int64_t>(secs * rate);
+    t.samples.resize(static_cast<std::size_t>(t.frames) * 2);
+    for (std::int64_t i = 0; i < t.frames; ++i) {
+        const float v =
+            static_cast<float>(0.5 * std::sin(2.0 * kPi * hz * static_cast<double>(i) / rate));
+        t.samples[static_cast<std::size_t>(i) * 2] = v;
+        t.samples[static_cast<std::size_t>(i) * 2 + 1] = v;
+    }
+    return t;
+}
+
+struct EngineCallback final : juce::AudioIODeviceCallback {
+    std::unique_ptr<audio::Engine> engine;
+    audio::DecodedTrack track_a;
+    audio::DecodedTrack track_b;
+    std::vector<float> scratch_l;
+    std::vector<float> scratch_r;
+    std::size_t max_block = 0;
     std::atomic<long long> samples{0};
     std::atomic<int> callbacks{0};
-    double rate = 48000.0;
-    double phase = 0.0;
+    std::atomic<long long> process_ns_total{0};
+    std::atomic<long long> process_ns_max{0};
 
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override {
         const double r = device->getCurrentSampleRate();
-        rate = r > 0.0 ? r : 48000.0;
-        phase = 0.0;
+        const double rate = r > 0.0 ? r : 48000.0;
+        max_block = static_cast<std::size_t>(std::max(device->getCurrentBufferSizeSamples(), 64));
+        engine = std::make_unique<audio::Engine>(audio::EngineConfig{rate, max_block});
+        scratch_l.assign(max_block, 0.0f);
+        scratch_r.assign(max_block, 0.0f);
+        track_a = make_sine(440.0, 2.0, rate);
+        track_b = make_sine(660.0, 2.0, rate);
+        engine->deck_a().load({track_a.samples.data(), track_a.frames, track_a.channels, rate});
+        engine->deck_a().play();
+        engine->deck_b().load({track_b.samples.data(), track_b.frames, track_b.channels, rate});
+        engine->deck_b().set_pitch_percent(-12.0);
+        engine->deck_b().play();
+        engine->set_curve(audio::CrossfadeCurve::Linear);
+        engine->set_crossfader(0.0);
+        engine->set_master_gain(0.15);
+        samples.store(0, std::memory_order_relaxed);
+        callbacks.store(0, std::memory_order_relaxed);
+        process_ns_total.store(0, std::memory_order_relaxed);
+        process_ns_max.store(0, std::memory_order_relaxed);
     }
 
     void audioDeviceIOCallbackWithContext(const float* const*, int, float* const* output,
                                           int num_out, int num_samples,
                                           const juce::AudioIODeviceCallbackContext&) override {
-        const double inc = kToneHz / rate;
-        for (int i = 0; i < num_samples; ++i) {
-            const float v = static_cast<float>(0.2 * std::sin(phase * 2.0 * kPi));
-            phase += inc;
-            if (phase >= 1.0) {
-                phase -= 1.0;
-            }
-            for (int ch = 0; ch < num_out; ++ch) {
-                if (output[ch] != nullptr) {
-                    output[ch][i] = v;
+        if (engine != nullptr && num_samples > 0) {
+            const auto t0 = std::chrono::steady_clock::now();
+            int done = 0;
+            while (done < num_samples) {
+                const int chunk = static_cast<int>(
+                    std::min<std::size_t>(max_block, static_cast<std::size_t>(num_samples - done)));
+                engine->process(scratch_l.data(), scratch_r.data(),
+                                static_cast<std::size_t>(chunk));
+                for (int i = 0; i < chunk; ++i) {
+                    if (num_out > 0 && output[0] != nullptr) {
+                        output[0][done + i] = scratch_l[static_cast<std::size_t>(i)];
+                    }
+                    if (num_out > 1 && output[1] != nullptr) {
+                        output[1][done + i] = scratch_r[static_cast<std::size_t>(i)];
+                    }
                 }
+                done += chunk;
+            }
+            const long long ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                     std::chrono::steady_clock::now() - t0)
+                                     .count();
+            process_ns_total.fetch_add(ns, std::memory_order_relaxed);
+            long long prev = process_ns_max.load(std::memory_order_relaxed);
+            while (ns > prev &&
+                   !process_ns_max.compare_exchange_weak(prev, ns, std::memory_order_relaxed,
+                                                         std::memory_order_relaxed)) {
             }
         }
         samples.fetch_add(num_samples, std::memory_order_relaxed);
@@ -49,6 +106,7 @@ struct ToneCallback final : juce::AudioIODeviceCallback {
     }
 
     void audioDeviceStopped() override {
+        engine.reset();
     }
 };
 
@@ -70,7 +128,7 @@ public:
 std::thread g_thread;
 std::atomic<bool> g_stop{false};
 bool g_started = false;
-ToneCallback g_cb;
+EngineCallback g_cb;
 SpikeReport g_report; // escrito antes del join; leído tras el join
 
 /// Abre con el tipo de dispositivo indicado a 48 kHz / 144 frames.
@@ -171,6 +229,11 @@ void run_spike(int seconds) {
 
     mgr.removeAudioCallback(&g_cb);
     const long long n = g_cb.samples.load(std::memory_order_relaxed);
+    const long long cb = g_cb.callbacks.load(std::memory_order_relaxed);
+    const long long ns_total = g_cb.process_ns_total.load(std::memory_order_relaxed);
+    const long long ns_max = g_cb.process_ns_max.load(std::memory_order_relaxed);
+    const double avg_ms = cb > 0 ? static_cast<double>(ns_total) / cb / 1.0e6 : 0.0;
+    const double max_ms = static_cast<double>(ns_max) / 1.0e6;
     const auto wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     const double expected = wall * rate;
     const std::string type_name =
@@ -179,18 +242,19 @@ void run_spike(int seconds) {
             : "(sin tipo)";
     juce::Logger::setCurrentLogger(nullptr);
 
-    char buf[768];
+    char buf[1024];
     std::snprintf(buf, sizeof(buf),
                   "[audio] modo=%s\n"
                   "[audio] tipo-juce=%s\n"
                   "[audio] dispositivo=%s\n"
                   "[audio] rate=%.0f Hz  buffer=%d f  latencia salida=%d f\n"
                   "[audio] LATENCIA (buffer+salida) = %.2f ms\n"
-                  "[audio] wall=%.2f s  callbacks=%d  muestras=%lld (esperado~%.0f, %.1f%%)\n",
+                  "[audio] wall=%.2f s  callbacks=%lld  muestras=%lld (esperado~%.0f, %.1f%%)\n"
+                  "[audio] motor: avg=%.3f ms/bloque  max=%.3f ms  (presupuesto 5 ms)\n",
                   chosen->label, type_name.c_str(), device_name.c_str(), rate, buffer, latency,
-                  total_ms, wall, g_cb.callbacks.load(std::memory_order_relaxed), n, expected,
-                  expected > 0.0 ? 100.0 * static_cast<double>(n) / expected : 0.0);
-    rep.ok = n > 0;
+                  total_ms, wall, cb, n, expected,
+                  expected > 0.0 ? 100.0 * static_cast<double>(n) / expected : 0.0, avg_ms, max_ms);
+    rep.ok = n > 0 && max_ms < 5.0;
     rep.text = buf;
     g_report = std::move(rep);
 }

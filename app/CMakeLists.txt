@@ -37,7 +37,7 @@ add_executable(melodeus WIN32
 )
 
 target_include_directories(melodeus PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(melodeus PRIVATE melodeus_core melodeus_imgui)
+target_link_libraries(melodeus PRIVATE melodeus_core melodeus_audio melodeus_imgui)
 melodeus_set_warnings(melodeus)
 melodeus_set_audio_options(melodeus)
 

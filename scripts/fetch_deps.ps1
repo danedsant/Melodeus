@@ -19,6 +19,7 @@ New-Item -ItemType Directory -Force -Path $ext | Out-Null
 # kind 'zip'  : descarga y expande; si el zip contiene un unico directorio
 #               superior, sus contenidos se colocan planos en external/<n>/.
 # kind 'file' : descarga un archivo suelto en external/<n>/<file>.
+# kind 'files': descarga la lista `files` desde `base`+nombre a external/<n>/.
 $deps = @(
     @{ name = 'imgui';       url = 'https://github.com/ocornut/imgui.git';       ref = 'v1.92.9b'; group = 'f0' }
     @{ name = 'JUCE';        url = 'https://github.com/juce-framework/JUCE.git'; ref = '9.0.3';    group = 'f0' }
@@ -32,6 +33,14 @@ $deps = @(
     @{ name = 'ffmpeg';      kind = 'zip'
        url  = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-win64-lgpl-9.0.zip'
        ref = 'n9.0'; group = 'f0' }
+    @{ name = 'dr_libs';     kind = 'files'
+       base = 'https://raw.githubusercontent.com/mackron/dr_libs/dfe8377631000664666519fdb83da193fd8037f4/'
+       files = @('dr_wav.h', 'dr_flac.h')
+       ref = 'dfe8377'; group = 'f1' }
+    @{ name = 'minimp3';     kind = 'files'
+       base = 'https://raw.githubusercontent.com/lieff/minimp3/ea99364f61c14656440e8d77e9c233ccf3124633/'
+       files = @('minimp3.h', 'minimp3_ex.h')
+       ref = 'ea99364'; group = 'f1' }
 )
 
 $wanted = $deps | Where-Object { $Group -eq 'all' -or $_.group -eq $Group }
@@ -57,6 +66,12 @@ foreach ($d in $wanted) {
         if ($d.kind -eq 'file') {
             New-Item -ItemType Directory -Force -Path $dir | Out-Null
             Invoke-WebRequest -Uri $d.url -OutFile (Join-Path $dir $d.file) -TimeoutSec 600
+        }
+        elseif ($d.kind -eq 'files') {
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            foreach ($f in $d.files) {
+                Invoke-WebRequest -Uri ($d.base + $f) -OutFile (Join-Path $dir $f) -TimeoutSec 120
+            }
         }
         elseif ($d.kind -eq 'zip') {
             Invoke-WebRequest -Uri $d.url -OutFile $tmp -TimeoutSec 600
