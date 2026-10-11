@@ -36,6 +36,7 @@ int accept_track_drop() {
 
 DeckPanelOut draw_deck_panel(const DeckUiState& state, int deck_idx, float width_px, float scale) {
     DeckPanelOut out{};
+    ImGui::PushID(deck_idx); // ##play/##cue/##pitch únicos por deck
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const float header_h = 64.0f * scale;
     const float pitch_w = 44.0f * scale;
@@ -185,7 +186,6 @@ DeckPanelOut draw_deck_panel(const DeckUiState& state, int deck_idx, float width
         return RECT{static_cast<LONG>(mn2.x), static_cast<LONG>(mn2.y),
                     static_cast<LONG>(mn2.x + width_px), static_cast<LONG>(mn2.y + h)};
     };
-    ImGui::PushID(deck_idx);
     out.rects.overview = lane("##ov", 40.0f * scale, IM_COL32(16, 18, 24, 255));
     out.rects.detail = lane("##dt", 110.0f * scale, IM_COL32(14, 16, 22, 255));
     ImGui::PopID();
