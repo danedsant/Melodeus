@@ -23,3 +23,6 @@ external/*
 *.dll
 *.lib
 *.log
+
+# Artefactos de runtime (ImGui)
+imgui.ini
