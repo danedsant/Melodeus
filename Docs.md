@@ -186,7 +186,15 @@ melodeus/
   > ✅ wiring en el spike: callback WASAPI → motor real con DSP
   > (`avg=0.087 ms`, `max=0.407 ms/bloque` vs presupuesto 5 ms; exclusivo 48k/144 f
   > a **9.00 ms**, muestras al 100 %, `SELFTEST=0`).
-  > **Pendiente F1:** scrub con UI (jog), estrés de 30 min sin xruns.
+  > ✅ **estrés 30 min** (`--selftest 1800`, render + motor a la vez): **0 xruns**
+  > (detector de gap entre callbacks > 2.5× periodo = 7.5 ms + errores de
+  > dispositivo), 86.3 M muestras al **100.0 %** del reloj, max-gap 4.26 ms,
+  > motor avg 0.212 / max 0.813 ms — el hilo de audio (MMCSS "Pro Audio") no se
+  > resintió ni con ráfagas de 860 ms del render. **DoD de F1 cumplido.**
+  > **Nota render 30 min:** la iGPU Intel UHD 620 degrada térmicamente sostenida
+  > a fps máximos (avg 390, min1s 11, frame max 860 ms) → vigilar en F2
+  > (limitar a 144 fps con waitable timer en vez de barrido libre).
+  > **Pendiente F1:** scrub con UI de jog (el primitivo de velocidad ya está).
 
 - **F2 — Render de waveform.** Pirámide multiresolución (min/max por nivel), waveform
   scrolling + bandas RGB (rojo=bajos, azul=agudos) en D3D12, layout ImGui base.

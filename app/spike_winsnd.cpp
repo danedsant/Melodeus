@@ -46,11 +46,22 @@ struct EngineCallback final : juce::AudioIODeviceCallback {
     std::atomic<int> callbacks{0};
     std::atomic<long long> process_ns_total{0};
     std::atomic<long long> process_ns_max{0};
+    std::atomic<long long> xrun_gaps{0};
+    std::atomic<long long> max_gap_ns{0};
+    std::atomic<int> device_errors{0};
+    // Solo en el hilo de audio:
+    std::chrono::steady_clock::time_point last_cb_time{};
+    bool have_last_cb = false;
+    long long gap_threshold_ns = 0;
 
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override {
         const double r = device->getCurrentSampleRate();
         const double rate = r > 0.0 ? r : 48000.0;
         max_block = static_cast<std::size_t>(std::max(device->getCurrentBufferSizeSamples(), 64));
+        const double period_s = static_cast<double>(device->getCurrentBufferSizeSamples()) / rate;
+        // xrun = llegada de callback con gap > 2.5× periodo nominal (buffer
+        // insuficiente: con MMCSS "Pro Audio" un gap así es underrun real).
+        gap_threshold_ns = static_cast<long long>(2.5 * period_s * 1.0e9);
         engine = std::make_unique<audio::Engine>(audio::EngineConfig{rate, max_block});
         scratch_l.assign(max_block, 0.0f);
         scratch_r.assign(max_block, 0.0f);
@@ -68,11 +79,32 @@ struct EngineCallback final : juce::AudioIODeviceCallback {
         callbacks.store(0, std::memory_order_relaxed);
         process_ns_total.store(0, std::memory_order_relaxed);
         process_ns_max.store(0, std::memory_order_relaxed);
+        xrun_gaps.store(0, std::memory_order_relaxed);
+        max_gap_ns.store(0, std::memory_order_relaxed);
+        device_errors.store(0, std::memory_order_relaxed);
+        have_last_cb = false;
     }
 
     void audioDeviceIOCallbackWithContext(const float* const*, int, float* const* output,
                                           int num_out, int num_samples,
                                           const juce::AudioIODeviceCallbackContext&) override {
+        const auto arrival = std::chrono::steady_clock::now();
+        if (have_last_cb) {
+            const long long gap =
+                std::chrono::duration_cast<std::chrono::nanoseconds>(arrival - last_cb_time)
+                    .count();
+            long long prev = max_gap_ns.load(std::memory_order_relaxed);
+            while (gap > prev &&
+                   !max_gap_ns.compare_exchange_weak(prev, gap, std::memory_order_relaxed,
+                                                     std::memory_order_relaxed)) {
+            }
+            if (gap > gap_threshold_ns) {
+                xrun_gaps.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        last_cb_time = arrival;
+        have_last_cb = true;
+
         if (engine != nullptr && num_samples > 0) {
             const auto t0 = std::chrono::steady_clock::now();
             int done = 0;
@@ -103,6 +135,10 @@ struct EngineCallback final : juce::AudioIODeviceCallback {
         }
         samples.fetch_add(num_samples, std::memory_order_relaxed);
         callbacks.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void audioDeviceError(const juce::String&) override {
+        device_errors.fetch_add(1, std::memory_order_relaxed);
     }
 
     void audioDeviceStopped() override {
@@ -232,8 +268,13 @@ void run_spike(int seconds) {
     const long long cb = g_cb.callbacks.load(std::memory_order_relaxed);
     const long long ns_total = g_cb.process_ns_total.load(std::memory_order_relaxed);
     const long long ns_max = g_cb.process_ns_max.load(std::memory_order_relaxed);
+    const long long xruns = g_cb.xrun_gaps.load(std::memory_order_relaxed);
+    const double max_gap_ms =
+        static_cast<double>(g_cb.max_gap_ns.load(std::memory_order_relaxed)) / 1.0e6;
+    const int dev_errors = g_cb.device_errors.load(std::memory_order_relaxed);
     const double avg_ms = cb > 0 ? static_cast<double>(ns_total) / cb / 1.0e6 : 0.0;
     const double max_ms = static_cast<double>(ns_max) / 1.0e6;
+    const double threshold_ms = static_cast<double>(g_cb.gap_threshold_ns) / 1.0e6;
     const auto wall = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     const double expected = wall * rate;
     const std::string type_name =
@@ -242,7 +283,7 @@ void run_spike(int seconds) {
             : "(sin tipo)";
     juce::Logger::setCurrentLogger(nullptr);
 
-    char buf[1024];
+    char buf[1280];
     std::snprintf(buf, sizeof(buf),
                   "[audio] modo=%s\n"
                   "[audio] tipo-juce=%s\n"
@@ -250,11 +291,14 @@ void run_spike(int seconds) {
                   "[audio] rate=%.0f Hz  buffer=%d f  latencia salida=%d f\n"
                   "[audio] LATENCIA (buffer+salida) = %.2f ms\n"
                   "[audio] wall=%.2f s  callbacks=%lld  muestras=%lld (esperado~%.0f, %.1f%%)\n"
-                  "[audio] motor: avg=%.3f ms/bloque  max=%.3f ms  (presupuesto 5 ms)\n",
+                  "[audio] motor: avg=%.3f ms/bloque  max=%.3f ms  (presupuesto 5 ms)\n"
+                  "[audio] xruns=%lld (umbral gap>%.2f ms)  max-gap=%.2f ms  "
+                  "errores-dispositivo=%d\n",
                   chosen->label, type_name.c_str(), device_name.c_str(), rate, buffer, latency,
                   total_ms, wall, cb, n, expected,
-                  expected > 0.0 ? 100.0 * static_cast<double>(n) / expected : 0.0, avg_ms, max_ms);
-    rep.ok = n > 0 && max_ms < 5.0;
+                  expected > 0.0 ? 100.0 * static_cast<double>(n) / expected : 0.0, avg_ms, max_ms,
+                  xruns, threshold_ms, max_gap_ms, dev_errors);
+    rep.ok = n > 0 && max_ms < 5.0 && xruns == 0 && dev_errors == 0;
     rep.text = buf;
     g_report = std::move(rep);
 }
@@ -270,6 +314,9 @@ void audio_spike_start(int seconds) {
     g_report = SpikeReport{};
     g_cb.samples.store(0, std::memory_order_relaxed);
     g_cb.callbacks.store(0, std::memory_order_relaxed);
+    g_cb.xrun_gaps.store(0, std::memory_order_relaxed);
+    g_cb.max_gap_ns.store(0, std::memory_order_relaxed);
+    g_cb.device_errors.store(0, std::memory_order_relaxed);
     g_thread = std::thread([seconds] { run_spike(seconds > 0 ? seconds : 5); });
 }
 
