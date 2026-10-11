@@ -26,7 +26,7 @@ struct TrackMeta {
 
 /// Wrapper mínimo de SQLite (WAL, un escritor) para la biblioteca. El FTS5
 /// usa content='tracks' con triggers de sincronía. No thread-safe por
-/// objeto: un Database por hilo escritor.
+/// objeto: cada hilo escritor abre su propio Database (WAL lo permite).
 class Database {
 public:
     Database() = default;
@@ -41,6 +41,14 @@ public:
         return db_ != nullptr;
     }
 
+    /// Ruta con la que se abrió (para reabrir desde otro hilo).
+    [[nodiscard]] const std::string& path() const {
+        return path_;
+    }
+
+    /// Ejecuta SQL sin resultados (migraciones, BEGIN/COMMIT de tests).
+    bool exec_sql(const char* sql);
+
     /// Inserta metadatos; devuelve el track_id o -1. BPM/key pueden ser 0.
     std::int64_t insert_track(const TrackMeta& meta);
 
@@ -48,13 +56,22 @@ public:
     bool update_analysis(std::int64_t track_id, double bpm, int camelot, bool camelot_minor,
                          const char* key_name);
 
+    /// BLOB de análisis (Docs §7.2): kind 0=beatgrid 1=waveform 2=cues.
+    /// `audio_sha1` es de 20 bytes; se invalida si cambia o cambia
+    /// format_version.
+    bool insert_analysis_blob(std::int64_t track_id, int kind, const std::uint8_t audio_sha1[20],
+                              const void* data, std::size_t size);
+
     /// Búsqueda FTS5 (tokens AND). Consulta vacía = primeras N por título.
     std::vector<TrackMeta> search(const char* query, int limit = 200) const;
 
     [[nodiscard]] int count() const;
 
+    [[nodiscard]] int blob_count() const;
+
 private:
     void* db_ = nullptr; // sqlite3*
+    std::string path_;
 };
 
 } // namespace melodeus::library

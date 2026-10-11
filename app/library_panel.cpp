@@ -94,26 +94,28 @@ LibraryAction draw_library_panel(LibraryUiState& state, float width_px, float he
                         t.title.c_str());
             dl->PopClipRect();
 
-            char buf[64];
+            char rowbuf[64];
             if (t.bpm > 0.0) {
-                std::snprintf(buf, sizeof(buf), "%.1f", t.bpm);
+                std::snprintf(rowbuf, sizeof(rowbuf), "%.1f", t.bpm);
             } else {
-                std::snprintf(buf, sizeof(buf), "--");
+                std::snprintf(rowbuf, sizeof(rowbuf), "--");
             }
-            dl->AddText(ImVec2(r0.x + col_title, r0.y + 3.0f), IM_COL32(170, 195, 225, 255), buf);
+            dl->AddText(ImVec2(r0.x + col_title, r0.y + 3.0f), IM_COL32(170, 195, 225, 255),
+                        rowbuf);
 
             if (t.camelot > 0) {
-                std::snprintf(buf, sizeof(buf), "%d%c", t.camelot, t.camelot_minor ? 'A' : 'B');
+                std::snprintf(rowbuf, sizeof(rowbuf), "%d%c", t.camelot,
+                              t.camelot_minor ? 'A' : 'B');
             } else {
-                std::snprintf(buf, sizeof(buf), "--");
+                std::snprintf(rowbuf, sizeof(rowbuf), "--");
             }
             dl->AddText(ImVec2(r0.x + col_title + col_bpm, r0.y + 3.0f),
-                        IM_COL32(170, 210, 175, 255), buf);
+                        IM_COL32(170, 210, 175, 255), rowbuf);
 
             const int secs = static_cast<int>(t.duration_ms / 1000);
-            std::snprintf(buf, sizeof(buf), "%d:%02d", secs / 60, secs % 60);
+            std::snprintf(rowbuf, sizeof(rowbuf), "%d:%02d", secs / 60, secs % 60);
             dl->AddText(ImVec2(r0.x + col_title + col_bpm + col_key, r0.y + 3.0f),
-                        IM_COL32(150, 158, 170, 255), buf);
+                        IM_COL32(150, 158, 170, 255), rowbuf);
 
             // Botones A/B.
             const ImVec2 ba0 = {r1.x - col_decks + 2.0f, r0.y + 2.0f};
@@ -153,11 +155,24 @@ LibraryAction draw_library_panel(LibraryUiState& state, float width_px, float he
     }
     ImGui::EndChild();
 
-    // Footer: add folder (placeholder F4) + filas.
+    // Footer: "+ carpeta" (clic real) + progreso/filas.
     const ImVec2 foot = {mn.x + 8.0f * scale, mn.y + height_px - footer_h + 2.0f * scale};
     ImGui::SetCursorScreenPos(foot);
-    ImGui::TextColored(ImVec4(0.45f, 0.48f, 0.55f, 1.0f), "[+ carpeta — F4]  %d pistas",
-                       static_cast<int>(state.rows.size()));
+    const ImVec2 f0 = ImGui::GetCursorScreenPos();
+    ImGui::TextColored(state.status[0] != '\0' ? ImVec4(0.65f, 0.72f, 0.82f, 1.0f)
+                                               : ImVec4(0.55f, 0.70f, 0.90f, 1.0f),
+                       "[+ carpeta]");
+    const ImVec2 f1 = ImGui::GetItemRectMax();
+    if (ImGui::IsMouseClicked(0) && ImGui::IsMouseHoveringRect(f0, f1)) {
+        action = LibraryAction::AddFolder;
+    }
+    ImGui::SameLine();
+    if (state.status[0] != '\0') {
+        ImGui::TextColored(ImVec4(0.65f, 0.72f, 0.82f, 1.0f), "%s", state.status);
+    } else {
+        ImGui::TextColored(ImVec4(0.45f, 0.48f, 0.55f, 1.0f), "%d pistas",
+                           static_cast<int>(state.rows.size()));
+    }
     return action;
 }
 

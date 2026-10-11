@@ -1,10 +1,13 @@
 #include "library/importer.hpp"
 
+#include "analysis/beatgrid.hpp"
 #include "analysis/bpm.hpp"
 #include "audio/decoder.hpp"
+#include "library/blob.hpp"
+#include "library/sha1.hpp"
 
 #include <algorithm>
-#include <cctype>
+#include <cstdio>
 
 namespace melodeus::library {
 
@@ -100,8 +103,68 @@ ImportResult import_file(Database& db, const std::filesystem::path& path) {
     result.track_id = db.insert_track(meta);
     if (result.track_id < 0) {
         result.error = "insert failed";
+        return result;
+    }
+
+    // BLOB del beatgrid (kind=0, Docs §7.2) con SHA-1 de los samples.
+    const auto digest = sha1(decoded.samples.data(), decoded.samples.size() * sizeof(float));
+    auto beatgrid = analysis::make_beatgrid(result.bpm, 0.0);
+    const auto packed = pack_beatgrid(beatgrid);
+    if (!db.insert_analysis_blob(result.track_id, kBlobBeatgrid, digest.data(), packed.data(),
+                                 packed.size())) {
+        result.error = "blob insert failed";
     }
     return result;
+}
+
+ImportWorker::~ImportWorker() {
+    join();
+}
+
+void ImportWorker::start(const std::filesystem::path& db_path, const std::filesystem::path& folder,
+                         bool recursive) {
+    if (running_.load(std::memory_order_acquire)) {
+        return;
+    }
+    join();
+    last_error_.clear();
+    done_.store(0, std::memory_order_relaxed);
+    total_.store(0, std::memory_order_relaxed);
+    imported_.store(0, std::memory_order_relaxed);
+    running_.store(true, std::memory_order_release);
+    thread_ = std::thread([this, db_path, folder, recursive] { run(db_path, folder, recursive); });
+}
+
+void ImportWorker::join() {
+    if (thread_.joinable()) {
+        thread_.join();
+    }
+    running_.store(false, std::memory_order_release);
+}
+
+void ImportWorker::run(const std::filesystem::path db_path, const std::filesystem::path folder,
+                       bool recursive) {
+    Database db;
+    if (!db.open(db_path.string().c_str())) {
+        last_error_ = "db open failed";
+        running_.store(false, std::memory_order_release);
+        return;
+    }
+    const auto files = scan_folder(folder, recursive);
+    total_.store(static_cast<int>(files.size()), std::memory_order_relaxed);
+    for (const auto& file : files) {
+        if (!running_.load(std::memory_order_acquire)) {
+            break;
+        }
+        const auto result = import_file(db, file);
+        if (result.track_id >= 0) {
+            imported_.fetch_add(1, std::memory_order_relaxed);
+        } else if (last_error_.empty()) {
+            last_error_ = result.error;
+        }
+        done_.fetch_add(1, std::memory_order_relaxed);
+    }
+    running_.store(false, std::memory_order_release);
 }
 
 } // namespace melodeus::library

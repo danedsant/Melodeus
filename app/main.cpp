@@ -27,6 +27,7 @@
 #include "imgui_impl_win32.h"
 
 #include <shellapi.h>
+#include <shobjidl.h>
 
 #include <algorithm>
 #include <chrono>
@@ -55,6 +56,8 @@ constexpr std::size_t kInstCap = WaveformPass::kMaxInstances / 4; // por carril
 DeviceD3D12 g_device;
 WaveformPass g_wave_pass;
 melodeus::library::Database g_db;
+std::filesystem::path g_db_path;
+melodeus::library::ImportWorker g_import;
 
 HWND g_hwnd = nullptr;
 
@@ -190,6 +193,7 @@ bool init_demo_library() {
         std::printf("[f3] no se pudo abrir la DB: %s\n", db_path.string().c_str());
         return false;
     }
+    g_db_path = db_path;
 
     if (g_db.count() > 0) {
         return true; // demo ya importada
@@ -248,6 +252,35 @@ bool init_demo_library() {
         }
     }
     return true;
+}
+
+/// Dialogo nativo de selección de carpeta (IFileOpenDialog). Devuelve ruta
+/// vacía si el usuario cancela.
+std::filesystem::path pick_folder() {
+    ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    std::filesystem::path result;
+    IFileOpenDialog* dlg = nullptr;
+    if (SUCCEEDED(::CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+                                     IID_PPV_ARGS(&dlg)))) {
+        DWORD flags = 0;
+        dlg->GetOptions(&flags);
+        dlg->SetOptions(flags | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+        if (SUCCEEDED(dlg->Show(g_hwnd))) {
+            IShellItem* item = nullptr;
+            if (SUCCEEDED(dlg->GetResult(&item))) {
+                PWSTR wpath = nullptr;
+                if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &wpath)) &&
+                    wpath != nullptr) {
+                    result = std::filesystem::path(wpath);
+                    ::CoTaskMemFree(wpath);
+                }
+                item->Release();
+            }
+        }
+        dlg->Release();
+    }
+    ::CoUninitialize();
+    return result;
 }
 
 /// Barra superior + inferior (estado) alrededor del área de trabajo.
@@ -530,6 +563,34 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
                 const int deck = (lib_action == melodeus::app::LibraryAction::LoadDeckA) ? 0 : 1;
                 melodeus::app::audio_spike_load(deck, row.uri.c_str(), row.title.c_str());
             }
+        }
+        // "+ carpeta": import en background (hilo con su propia conexión WAL).
+        if (lib_action == melodeus::app::LibraryAction::AddFolder && !g_import.running()) {
+            const auto folder = pick_folder();
+            if (!folder.empty() && !g_db_path.empty()) {
+                std::printf("[f3] importando carpeta: %s\n", folder.string().c_str());
+                g_import.start(g_db_path, folder, /*recursive=*/true);
+            }
+        }
+        // Progreso del import: status en el footer + refresh al terminar.
+        {
+            static bool import_running_prev = false;
+            static int import_last_done = -1;
+            if (g_import.running()) {
+                std::snprintf(lib_state.status, sizeof(lib_state.status), "importando %d/%d...",
+                              g_import.done(), g_import.total());
+                if (g_import.done() != import_last_done) {
+                    import_last_done = g_import.done();
+                    lib_state.needs_refresh = true;
+                }
+            } else if (import_running_prev) {
+                std::snprintf(lib_state.status, sizeof(lib_state.status), "importado: %d ok%s%s",
+                              g_import.imported(), g_import.last_error().empty() ? "" : " | ",
+                              g_import.last_error().c_str());
+                lib_state.needs_refresh = true;
+                import_last_done = -1;
+            }
+            import_running_prev = g_import.running();
         }
         // Selftest: verificar el camino de carga desde la biblioteca.
         if (selftest && !selftest_loaded && now >= 1.0) {

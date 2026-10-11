@@ -12,12 +12,14 @@ enum class LibraryAction {
     LoadDeckA,
     LoadDeckB,
     ToggleSide, ///< mueve el panel al otro lado
+    AddFolder,  ///< pide carpeta al usuario (picker COM en main)
 };
 
 /// Estado del panel de biblioteca (búsqueda FTS5 + tabla).
 struct LibraryUiState {
     const library::Database* db = nullptr; ///< nullptr = panel vacío
     char search[128] = {};
+    char status[64] = {}; ///< texto del footer (progreso de import, etc.)
     std::vector<library::TrackMeta> rows;
     int selected = -1;
     bool on_left = true;

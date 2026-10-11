@@ -1,9 +1,12 @@
 #include <doctest.h>
 
 #include "audio/decoder.hpp"
+#include "library/blob.hpp"
 #include "library/database.hpp"
 #include "library/importer.hpp"
+#include "library/sha1.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -161,6 +164,65 @@ TEST_CASE("Importer: archivo WAV click 128 BPM") {
     CHECK(rows[0].bpm == doctest::Approx(128.0).epsilon(0.02));
     CHECK(rows[0].format == "wav");
     CHECK(rows[0].duration_ms == 6000);
+    CHECK(db.blob_count() == 1); // beatgrid BLOB del import
+}
+
+TEST_CASE("blob beatgrid roundtrip") {
+    melodeus::analysis::BeatGrid in;
+    in.bpm = 127.8;
+    in.offset_sec = 0.243;
+    const auto packed = melodeus::library::pack_beatgrid(in);
+    CHECK(packed.size() == 16);
+    melodeus::analysis::BeatGrid out;
+    REQUIRE(melodeus::library::unpack_beatgrid(packed.data(), packed.size(), &out));
+    CHECK(out.bpm == doctest::Approx(127.8));
+    CHECK(out.offset_sec == doctest::Approx(0.243));
+    CHECK_FALSE(melodeus::library::unpack_beatgrid(packed.data(), 8, &out));
+}
+
+TEST_CASE("sha1 vectores conocidos") {
+    const auto abc = melodeus::library::sha1("abc", 3);
+    CHECK(abc[0] == 0xa9);
+    CHECK(abc[1] == 0x99);
+    CHECK(abc[2] == 0x3e);
+    CHECK(abc[3] == 0x36);
+    CHECK(abc[19] == 0x9d); // a9993e36...9cd0d89d
+    const auto empty = melodeus::library::sha1("", 0);
+    CHECK(empty[0] == 0xda);
+    CHECK(empty[19] == 0x09); // da39a3ee...afd80709
+}
+
+TEST_CASE("Database: 50k pistas + búsqueda < 20 ms (DoD F3)") {
+    TempDb tmp("perf50k");
+    melodeus::library::Database db;
+    REQUIRE(db.open(tmp.path.string().c_str()));
+    REQUIRE(db.exec_sql("BEGIN;"));
+    for (int i = 0; i < 50000; ++i) {
+        melodeus::library::TrackMeta m;
+        m.uri = "file://" + std::to_string(i);
+        m.title = "Track " + std::to_string(i) + " Omega";
+        m.artist = "Artist " + std::to_string(i % 500);
+        m.bpm = 110.0 + (i % 80);
+        REQUIRE(db.insert_track(m) > 0);
+    }
+    REQUIRE(db.exec_sql("COMMIT;"));
+    CHECK(db.count() == 50000);
+
+    // Varias búsquedas FTS5; el DoD pide < 20 ms con audio reproduciéndose
+    // (aquí medimos sólo la query; el audio se valida en el selftest).
+    const char* queries[] = {"omega 42", "track 49999", "artist 7", "alpha"};
+    double worst = 0.0;
+    for (const char* q : queries) {
+        const auto t0 = std::chrono::steady_clock::now();
+        const auto rows = db.search(q);
+        const double ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
+                .count();
+        worst = (std::max)(worst, ms);
+        CHECK(rows.size() >= 0);
+    }
+    CHECK(worst < 20.0);
+    std::printf("[perf50k] peor búsqueda: %.2f ms\n", worst);
 }
 
 TEST_CASE("Importer: scan_folder encuentra wav/flac/mp3") {

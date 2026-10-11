@@ -97,6 +97,7 @@ bool Database::open(const char* path) {
         return false;
     }
     db_ = raw;
+    path_ = (path != nullptr) ? path : "";
     sqlite3* db = static_cast<sqlite3*>(db_);
     sqlite3_exec(db, "PRAGMA journal_mode=WAL;", nullptr, nullptr, nullptr);
     sqlite3_exec(db, "PRAGMA foreign_keys=ON;", nullptr, nullptr, nullptr);
@@ -111,11 +112,9 @@ bool Database::open(const char* path) {
     if (version_stmt != nullptr) {
         sqlite3_finalize(version_stmt);
     }
-    if (schema_version >= 1) {
-        return true;
-    }
 
-    const char* schema = R"SQL(
+    if (schema_version < 1) {
+        const char* schema = R"SQL(
         CREATE TABLE tracks(
           track_id INTEGER PRIMARY KEY,
           source_type INTEGER NOT NULL,
@@ -146,12 +145,24 @@ bool Database::open(const char* path) {
         END;
         PRAGMA user_version = 1;
     )SQL";
-    char* err = nullptr;
-    const int rc = sqlite3_exec(db, schema, nullptr, nullptr, &err);
-    if (err != nullptr) {
-        sqlite3_free(err);
+        char* err = nullptr;
+        const int rc = sqlite3_exec(db, schema, nullptr, nullptr, &err);
+        if (err != nullptr) {
+            sqlite3_free(err);
+        }
+        if (rc != SQLITE_OK) {
+            close();
+            return false;
+        }
     }
-    if (rc != SQLITE_OK) {
+    // Migración v2: tabla de BLOBs de análisis (Docs §7.2).
+    if (!exec_sql("CREATE TABLE IF NOT EXISTS analysis_blobs("
+                  " track_id INTEGER PRIMARY KEY,"
+                  " format_version INTEGER NOT NULL,"
+                  " audio_sha1 BLOB NOT NULL,"
+                  " kind INTEGER NOT NULL,"
+                  " data BLOB NOT NULL);") ||
+        !exec_sql("PRAGMA user_version = 2;")) {
         close();
         return false;
     }
@@ -163,6 +174,19 @@ void Database::close() {
         sqlite3_close(static_cast<sqlite3*>(db_));
         db_ = nullptr;
     }
+    path_.clear();
+}
+
+bool Database::exec_sql(const char* sql) {
+    if (db_ == nullptr || sql == nullptr) {
+        return false;
+    }
+    char* err = nullptr;
+    const int rc = sqlite3_exec(static_cast<sqlite3*>(db_), sql, nullptr, nullptr, &err);
+    if (err != nullptr) {
+        sqlite3_free(err);
+    }
+    return rc == SQLITE_OK;
 }
 
 std::int64_t Database::insert_track(const TrackMeta& meta) {
@@ -263,6 +287,48 @@ int Database::count() const {
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(static_cast<sqlite3*>(db_), "SELECT COUNT(*) FROM tracks;", -1, &stmt,
                            nullptr) != SQLITE_OK) {
+        return 0;
+    }
+    int n = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        n = sqlite3_column_int(stmt, 0);
+    }
+    sqlite3_finalize(stmt);
+    return n;
+}
+
+bool Database::insert_analysis_blob(std::int64_t track_id, int kind,
+                                    const std::uint8_t audio_sha1[20], const void* data,
+                                    std::size_t size) {
+    if (db_ == nullptr || audio_sha1 == nullptr || data == nullptr || size == 0) {
+        return false;
+    }
+    sqlite3* db = static_cast<sqlite3*>(db_);
+    sqlite3_stmt* stmt = nullptr;
+    const char* sql =
+        "INSERT INTO analysis_blobs(track_id, format_version, audio_sha1, kind, data)"
+        " VALUES (?, 1, ?, ?, ?)"
+        " ON CONFLICT(track_id) DO UPDATE SET format_version=1, audio_sha1=excluded.audio_sha1,"
+        " kind=excluded.kind, data=excluded.data";
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return false;
+    }
+    sqlite3_bind_int64(stmt, 1, track_id);
+    sqlite3_bind_blob(stmt, 2, audio_sha1, 20, SQLITE_TRANSIENT);
+    sqlite3_bind_int(stmt, 3, kind);
+    sqlite3_bind_blob(stmt, 4, data, static_cast<int>(size), SQLITE_TRANSIENT);
+    const bool ok = sqlite3_step(stmt) == SQLITE_DONE;
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+int Database::blob_count() const {
+    if (db_ == nullptr) {
+        return 0;
+    }
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(static_cast<sqlite3*>(db_), "SELECT COUNT(*) FROM analysis_blobs;", -1,
+                           &stmt, nullptr) != SQLITE_OK) {
         return 0;
     }
     int n = 0;
