@@ -28,7 +28,7 @@ estricta por hilos y reglas de tiempo real verificables por build.
 | Área | Elección | Licencia |
 |---|---|---|
 | Build | CMake ≥ 3.24 + MSVC (VS2022/BuildTools) | — |
-| Audio I/O | JUCE `juce_audio_devices` (WASAPI Exclusivo + ASIO) | ⚠️ AGPLv3 o comercial (JUCE ≥7; confirmar tiers en juce.com antes de F1) |
+| Audio I/O | JUCE `juce_audio_devices` (WASAPI Exclusivo + ASIO) | AGPLv3 (JUCE doble licencia; **decisión D1**: Melodeus se distribuye como AGPLv3, ver `LICENSE`) |
 | ASIO | Steinberg ASIO SDK (`JUCE_USE_ASIO=1`) | Gratis con registro |
 | Ventana/Render | Win32 + **Dear ImGui** (backend DX12) + D3D12 propio | MIT |
 | DSP | Propio (TPT biquad, SVF, limiter) + `pffft`/`juce::dsp::FFT` | — |
@@ -264,7 +264,7 @@ CREATE TABLE analysis_blobs(
 | GPU sin DirectML / VRAM insuficiente | Alto | Fallback CPU con aviso; stems desactivables |
 | Endpoint exclusivo no conforme (Realtek a 64 kHz con 48k declarado) | Alto | Conformance check `IAudioClock` al abrir; fallback compartido `IAudioClient3` |
 | Exclusivo limitado a PCM16/24 @44.1/48k (sin float32) en HW integrado | Medio | Motor trabaja en float interno; acepta el formato nativo del dispositivo |
-| JUCE AGPLv3/comercial | Económico/legal | Confirmar tiers en juce.com antes de F1; decisión registrada aquí |
+| JUCE AGPLv3/comercial | Económico/legal | **Resuelto (D1):** Melodeus es AGPLv3 (`LICENSE`); JUCE se usa bajo su licencia AGPLv3. Comercial solo si el modelo cambia |
 | `yt-dlp` cambia sus argumentos | Medio | Aislado tras `IStreamSource`, tests de humo |
 | JUCE MessageManager + ventana Win32 propia | Medio | Validado en F0 antes de invertir en más código |
 | Latencia de stems > 500 ms en GPUs débiles | Medio | Ajustar hop/ventana y mostrar latencia real en UI |
