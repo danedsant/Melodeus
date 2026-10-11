@@ -193,12 +193,26 @@ melodeus/
   > resintió ni con ráfagas de 860 ms del render. **DoD de F1 cumplido.**
   > **Nota render 30 min:** la iGPU Intel UHD 620 degrada térmicamente sostenida
   > a fps máximos (avg 390, min1s 11, frame max 860 ms) → vigilar en F2
-  > (limitar a 144 fps con waitable timer en vez de barrido libre).
+  > (limitar a 144 fps; el waitable timer de alta resolución no expira en este
+  > entorno — ni siquiera el timer clásico —, así que F2 usa sleep+spin por QPC).
   > **Pendiente F1:** scrub con UI de jog (el primitivo de velocidad ya está).
 
 - **F2 — Render de waveform.** Pirámide multiresolución (min/max por nivel), waveform
   scrolling + bandas RGB (rojo=bajos, azul=agudos) en D3D12, layout ImGui base.
   **DoD:** 144fps sostenidos con 4 ondas + espectro, sin allocations en el hilo de render.
+  > **Estado: F2 completo.** ✅ `src/waveform/`: `WaveformPyramid` (niveles 256–32768
+  > muestras/bucket, fusionadas 2 hijos, bandas lo/mid/hi), `pick_level`/`visible_range`,
+  > `fill_wave_instances` (NDC, 28 B/instancia), `FftScratch` radix-2 sin allocs.
+  > ✅ Shaders `waveform.hlsl` (quads instanciados por SV_VertexID) compilados en build
+  > con fxc (vs_5_1/ps_5_1) y copiados junto al exe. ✅ `WaveformPass` D3D12: PSO root-sig
+  > vacío, upload-heap N-buffered persistently mapped (sin hazard: slot = frame_slot()).
+  > ✅ Layout ImGui: overview+detail por deck, mixer/browser placeholder (F3/F4),
+  > espectro 48 barras log del tap SPSC 1024 f del master. ✅ Pirámides construidas en
+  > `aboutToStart` desde pistas de 30 s; vista `audio_spike_view()` para el hilo de render.
+  > ✅ Pacing `--paced` (sleep+spin QPC a 144 Hz): avg 144.0 / min1s 143.8 / frame 6.94 ms
+  > con el payload completo en la UHD 620; sin paced, avg 620 fps. DoD cumplido
+  > (49/49 tests, 6872 aserciones; selftest 5 s OK; 0 xruns; motor avg 0.02–0.03 ms).
+  > **Pendiente F2:** scrub con UI de jog (heredado de F1).
 
 - **F3 — Biblioteca y análisis.** SQLite FTS5 (`unicode61 remove_diacritics 2`), import de
   carpetas, beatgrid/BPM/key en background, BLOBs versionados (`format_version + audio_sha1`),

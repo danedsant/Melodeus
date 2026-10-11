@@ -51,6 +51,9 @@ melodeus_set_warnings(melodeus_core)
 # ------------------------------------------------------------------ audio
 add_subdirectory(src/audio)
 
+# ---------------------------------------------------------------- waveform (F2)
+add_subdirectory(src/waveform)
+
 # ------------------------------------------------------------------ tests
 if(MELODEUS_BUILD_TESTS)
     enable_testing()

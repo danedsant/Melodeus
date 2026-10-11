@@ -14,11 +14,14 @@
 
 #include "audio/decoder.hpp"
 #include "audio/engine.hpp"
+#include "waveform/waveform.hpp"
 
 namespace melodeus::app {
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
+constexpr double kTrackSeconds = 30.0; // pistas sintéticas para F2 (waveform)
+constexpr int kTapLen = 1024;
 
 audio::DecodedTrack make_sine(double hz, double secs, double rate) {
     audio::DecodedTrack t;
@@ -49,6 +52,15 @@ struct EngineCallback final : juce::AudioIODeviceCallback {
     std::atomic<long long> xrun_gaps{0};
     std::atomic<long long> max_gap_ns{0};
     std::atomic<int> device_errors{0};
+    // Tap del master (SPSC doble búfer): escritor = hilo de audio.
+    std::atomic<unsigned> tap_seq{0};
+    float tap_buf[2][kTapLen]{};
+    int tap_fill = 0;
+    int tap_cur = 0;
+    // Pirámides inmutables tras aboutToStart (leídas por el hilo de render).
+    wave::WaveformPyramid pyr_a;
+    wave::WaveformPyramid pyr_b;
+    std::atomic<bool> running{false};
     // Solo en el hilo de audio:
     std::chrono::steady_clock::time_point last_cb_time{};
     bool have_last_cb = false;
@@ -65,8 +77,10 @@ struct EngineCallback final : juce::AudioIODeviceCallback {
         engine = std::make_unique<audio::Engine>(audio::EngineConfig{rate, max_block});
         scratch_l.assign(max_block, 0.0f);
         scratch_r.assign(max_block, 0.0f);
-        track_a = make_sine(440.0, 2.0, rate);
-        track_b = make_sine(660.0, 2.0, rate);
+        track_a = make_sine(440.0, kTrackSeconds, rate);
+        track_b = make_sine(660.0, kTrackSeconds, rate);
+        pyr_a.build(track_a.samples.data(), track_a.frames, track_a.channels, rate);
+        pyr_b.build(track_b.samples.data(), track_b.frames, track_b.channels, rate);
         engine->deck_a().load({track_a.samples.data(), track_a.frames, track_a.channels, rate});
         engine->deck_a().play();
         engine->deck_b().load({track_b.samples.data(), track_b.frames, track_b.channels, rate});
@@ -82,6 +96,10 @@ struct EngineCallback final : juce::AudioIODeviceCallback {
         xrun_gaps.store(0, std::memory_order_relaxed);
         max_gap_ns.store(0, std::memory_order_relaxed);
         device_errors.store(0, std::memory_order_relaxed);
+        tap_fill = 0;
+        tap_cur = 0;
+        tap_seq.store(0, std::memory_order_relaxed);
+        running.store(true, std::memory_order_release);
         have_last_cb = false;
     }
 
@@ -120,6 +138,15 @@ struct EngineCallback final : juce::AudioIODeviceCallback {
                     if (num_out > 1 && output[1] != nullptr) {
                         output[1][done + i] = scratch_r[static_cast<std::size_t>(i)];
                     }
+                    // Tap mono del master para el espectro (SPSC doble búfer).
+                    float* dst = tap_buf[tap_cur];
+                    dst[tap_fill] = 0.5f * (scratch_l[static_cast<std::size_t>(i)] +
+                                            scratch_r[static_cast<std::size_t>(i)]);
+                    if (++tap_fill == kTapLen) {
+                        tap_cur ^= 1;
+                        tap_fill = 0;
+                        tap_seq.fetch_add(1, std::memory_order_release);
+                    }
                 }
                 done += chunk;
             }
@@ -142,6 +169,7 @@ struct EngineCallback final : juce::AudioIODeviceCallback {
     }
 
     void audioDeviceStopped() override {
+        running.store(false, std::memory_order_release);
         engine.reset();
     }
 };
@@ -304,6 +332,24 @@ void run_spike(int seconds) {
 }
 
 } // namespace
+
+bool audio_spike_view(AudioSpikeView* out) {
+    if (out == nullptr || !g_started || g_cb.engine == nullptr ||
+        !g_cb.running.load(std::memory_order_acquire)) {
+        return false;
+    }
+    audio::Engine& engine = *g_cb.engine;
+    out->deck_a_seconds = engine.deck_a().position_seconds();
+    out->deck_b_seconds = engine.deck_b().position_seconds();
+    out->sample_rate = engine.config().sample_rate;
+    out->pyramid_a = &g_cb.pyr_a;
+    out->pyramid_b = &g_cb.pyr_b;
+    out->tap_seq = g_cb.tap_seq.load(std::memory_order_acquire);
+    const int idx = (out->tap_seq & 1u) ^ 1u;
+    out->tap = g_cb.tap_buf[idx];
+    out->tap_len = kTapLen;
+    return true;
+}
 
 void audio_spike_start(int seconds) {
     if (g_started) {

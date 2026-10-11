@@ -60,6 +60,12 @@ public:
         return occluded_;
     }
 
+    /// Slot de frame actual (tras begin_frame): base para los upload heaps
+    /// con kFramesInFlight en vuelo.
+    UINT frame_slot() const {
+        return frame_index_ % kFramesInFlight;
+    }
+
     ID3D12Device* device() const {
         return device_.Get();
     }

@@ -28,16 +28,63 @@ if(MSVC)
         UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
+# --- Shaders HLSL (waveform) compilados con fxc.exe del Windows SDK ----
+set(MELODEUS_SHADER_SRC ${CMAKE_CURRENT_SOURCE_DIR}/render/shaders/waveform.hlsl)
+set(MELODEUS_SHADER_OUT ${CMAKE_CURRENT_BINARY_DIR}/shaders)
+set(MELODEUS_FXC_FOUND OFF)
+find_program(MELODEUS_FXC fxc
+    HINTS "$ENV{WindowsSdkDir}/bin/$ENV{WindowsSDKVersion}x64"
+          "$ENV{WindowsSdkDir}/bin/x64")
+if(NOT MELODEUS_FXC)
+    file(GLOB _fxc_versions "C:/Program Files (x86)/Windows Kits/10/bin/10.*/x64/fxc.exe")
+    list(SORT _fxc_versions)
+    list(REVERSE _fxc_versions)
+    if(_fxc_versions)
+        list(GET _fxc_versions 0 MELODEUS_FXC)
+    endif()
+endif()
+
 add_executable(melodeus WIN32
     main.cpp
     app_state.cpp
     render/device_d3d12.cpp
     render/imgui_layer.cpp
+    render/waveform_pass.cpp
     spike_winsnd.cpp
 )
 
+if(MELODEUS_FXC)
+    set(MELODEUS_FXC_FOUND ON)
+    add_custom_command(
+        OUTPUT ${MELODEUS_SHADER_OUT}/waveform.vso ${MELODEUS_SHADER_OUT}/waveform.pso
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${MELODEUS_SHADER_OUT}
+        COMMAND "${MELODEUS_FXC}" /nologo /T vs_5_1 /E vs_main
+                /Fo ${MELODEUS_SHADER_OUT}/waveform.vso ${MELODEUS_SHADER_SRC}
+        COMMAND "${MELODEUS_FXC}" /nologo /T ps_5_1 /E ps_main
+                /Fo ${MELODEUS_SHADER_OUT}/waveform.pso ${MELODEUS_SHADER_SRC}
+        DEPENDS ${MELODEUS_SHADER_SRC}
+        COMMENT "fxc: waveform.hlsl -> .vso/.pso"
+        VERBATIM)
+    add_custom_target(melodeus_shaders DEPENDS
+        ${MELODEUS_SHADER_OUT}/waveform.vso ${MELODEUS_SHADER_OUT}/waveform.pso)
+    add_dependencies(melodeus melodeus_shaders)
+    add_custom_command(TARGET melodeus POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${MELODEUS_SHADER_OUT}/waveform.vso
+            ${MELODEUS_SHADER_OUT}/waveform.pso
+            $<TARGET_FILE_DIR:melodeus>
+        COMMENT "copiando .cso junto al exe")
+    message(STATUS "melodeus: fxc -> ${MELODEUS_FXC}")
+else()
+    message(WARNING "melodeus: fxc.exe no encontrado; el pase de waveform se omite.")
+endif()
+
 target_include_directories(melodeus PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(melodeus PRIVATE melodeus_core melodeus_audio melodeus_imgui)
+target_link_libraries(melodeus PRIVATE melodeus_core melodeus_audio melodeus_waveform
+    melodeus_imgui)
+if(MELODEUS_FXC_FOUND)
+    target_compile_definitions(melodeus PRIVATE MELODEUS_HAVE_WAVEFORM_PASS=1)
+endif()
 melodeus_set_warnings(melodeus)
 melodeus_set_audio_options(melodeus)
 
@@ -57,5 +104,4 @@ if(MSVC)
         UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
-# dxc/fxc: los shaders se compilan con el Windows SDK (fxc.exe) en F2; por
-# ahora el spike usa shaders inline de ImGui.
+# fxc se localiza al principio del archivo (bloque "Shaders HLSL").
