@@ -50,6 +50,10 @@ public:
         pitch_pct_ = std::clamp(pct, -100.0, 100.0);
     }
 
+    [[nodiscard]] double pitch_percent() const noexcept {
+        return pitch_pct_;
+    }
+
     /// Scrub: si r != 0, el deck avanza a esa velocidad (1.0 = normal,
     /// 0.125 = 1/8, negativo = atrás) ignorando el pitch. 0 desactiva.
     void set_scrub_rate(double r) noexcept {

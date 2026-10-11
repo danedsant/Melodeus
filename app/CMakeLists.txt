@@ -47,6 +47,9 @@ endif()
 add_executable(melodeus WIN32
     main.cpp
     app_state.cpp
+    deck_panel.cpp
+    library_panel.cpp
+    mixer_panel.cpp
     render/device_d3d12.cpp
     render/imgui_layer.cpp
     render/waveform_pass.cpp
@@ -81,7 +84,7 @@ endif()
 
 target_include_directories(melodeus PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(melodeus PRIVATE melodeus_core melodeus_audio melodeus_waveform
-    melodeus_imgui)
+    melodeus_analysis melodeus_library melodeus_imgui)
 if(MELODEUS_FXC_FOUND)
     target_compile_definitions(melodeus PRIVATE MELODEUS_HAVE_WAVEFORM_PASS=1)
 endif()

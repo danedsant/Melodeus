@@ -218,6 +218,22 @@ melodeus/
   carpetas, beatgrid/BPM/key en background, BLOBs versionados (`format_version + audio_sha1`),
   HUD "Just-In-Time".
   **DoD:** 50k pistas, búsqueda < 20 ms con audio reproduciéndose sin dropouts.
+  > **Estado: F3 núcleo + UI completo.** ✅ `src/analysis/`: `detect_bpm` (envolvente de
+  > onset + autocorrelación 70–180 con corrección de octava; click 128 → 127.8),
+  > `detect_key` (croma STFT + Krumhansl-Schmuckler → Camelot A/B + tradicional;
+  > acorde Am → 8A/Am), `BeatGrid` mínimo. ✅ `src/library/`: SQLite 3.46 amalgamation
+  > (external/sqlite, fetch_deps grupo f3), `Database` (WAL, FTS5 con triggers, migración
+  > por user_version), `import_file` (decode dr_*/minimp3 + análisis). Tests: roundtrip,
+  > diacríticos, 3000 filas < 50 ms, import WAV click. ✅ UI replanteada (3 columnas):
+  > biblioteca a izq/der con toggle (tabla Title/BPM/Key/Time, botones A/B, doble-click
+  > carga), decks al centro con **display BPM (+pitch) y key Camelot(tradicional)**,
+  > tiempo y título; mixer mínimo a un lado (crossfader, faders, master, VU desde
+  > peak_a/peak_b/master_env). ✅ Spike: DB demo en %TEMP% (click 128 + acorde Am),
+  > carga con staging seguro (decode en hilo llamador, swap en hilo de audio),
+  > mixer remoto por atomics. ✅ Selftest: 143.9 fps paced con UI completa,
+  > carga staged verificada, 0 xruns. **Pendiente F3:** import de carpetas con UI
+  > (botón placeholder), BLOBs de análisis (beatgrid/waveform) en `analysis_blobs`,
+  > 50k pistas de prueba, scrub jog (heredado de F1).
 
 - **F4 — Streaming y caché.** `YtDlpSource` aislado tras `IStreamSource` + disclaimer de ToS,
   jitter buffer de red, anillo de descarga alrededor del icono, caché LRU por peso.

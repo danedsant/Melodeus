@@ -5,7 +5,7 @@
 #   .\scripts\fetch_deps.ps1 -Force     # re-descarta y vuelve a clonar
 [CmdletBinding()]
 param(
-    [ValidateSet('f0', 'all')]
+    [ValidateSet('f0', 'f1', 'f3', 'all')]
     [string]$Group = 'f0',
     [switch]$Force
 )
@@ -41,6 +41,9 @@ $deps = @(
        base = 'https://raw.githubusercontent.com/lieff/minimp3/ea99364f61c14656440e8d77e9c233ccf3124633/'
        files = @('minimp3.h', 'minimp3_ex.h')
        ref = 'ea99364'; group = 'f1' }
+    @{ name = 'sqlite';      kind = 'zip'
+       url  = 'https://www.sqlite.org/2024/sqlite-amalgamation-3460100.zip'
+       ref = '3.46.1'; group = 'f3' }
 )
 
 $wanted = $deps | Where-Object { $Group -eq 'all' -or $_.group -eq $Group }

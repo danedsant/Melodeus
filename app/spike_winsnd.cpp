@@ -60,6 +60,18 @@ struct EngineCallback final : juce::AudioIODeviceCallback {
     // Pirámides inmutables tras aboutToStart (leídas por el hilo de render).
     wave::WaveformPyramid pyr_a;
     wave::WaveformPyramid pyr_b;
+    // Carga con staging: el hilo llamador decodifica en stage[i] y publica
+    // pending_load; el hilo de audio hace el swap al inicio del callback.
+    audio::DecodedTrack stage[2];
+    char title_a[128] = "Sine 440 Hz";
+    char title_b[128] = "Sine 660 Hz";
+    std::atomic<int> pending_load{-1};
+    // Inputs de UI aplicados en el hilo de audio (smoothing del motor).
+    std::atomic<float> ui_xf{0.0f};
+    std::atomic<float> ui_gain_a{1.0f};
+    std::atomic<float> ui_gain_b{1.0f};
+    std::atomic<float> ui_master{0.15f};
+    std::atomic<int> ui_play_toggle{0}; ///< bit0=A bit1=B
     std::atomic<bool> running{false};
     // Solo en el hilo de audio:
     std::chrono::steady_clock::time_point last_cb_time{};
@@ -89,6 +101,12 @@ struct EngineCallback final : juce::AudioIODeviceCallback {
         engine->set_curve(audio::CrossfadeCurve::Linear);
         engine->set_crossfader(0.0);
         engine->set_master_gain(0.15);
+        pending_load.store(-1, std::memory_order_relaxed);
+        ui_xf.store(0.0f, std::memory_order_relaxed);
+        ui_gain_a.store(1.0f, std::memory_order_relaxed);
+        ui_gain_b.store(1.0f, std::memory_order_relaxed);
+        ui_master.store(0.15f, std::memory_order_relaxed);
+        ui_play_toggle.store(0, std::memory_order_relaxed);
         samples.store(0, std::memory_order_relaxed);
         callbacks.store(0, std::memory_order_relaxed);
         process_ns_total.store(0, std::memory_order_relaxed);
@@ -124,6 +142,43 @@ struct EngineCallback final : juce::AudioIODeviceCallback {
         have_last_cb = true;
 
         if (engine != nullptr && num_samples > 0) {
+            // Swap de carga staged (decode hecho en el hilo llamador).
+            const int pend = pending_load.exchange(-1, std::memory_order_acq_rel);
+            if (pend >= 0 && pend < 2) {
+                audio::DecodedTrack& staged = stage[pend];
+                if (staged.frames > 0 && staged.samples.size() >= 2) {
+                    wave::WaveformPyramid& pyr = (pend == 0) ? pyr_a : pyr_b;
+                    pyr.build(staged.samples.data(), staged.frames, staged.channels,
+                              staged.sample_rate);
+                    audio::Deck& deck = (pend == 0) ? engine->deck_a() : engine->deck_b();
+                    deck.load({staged.samples.data(), staged.frames, staged.channels,
+                               staged.sample_rate});
+                    deck.play();
+                }
+            }
+            // Inputs de UI (smoothing en el motor).
+            engine->set_crossfader(ui_xf.load(std::memory_order_relaxed));
+            engine->deck_a().set_gain(ui_gain_a.load(std::memory_order_relaxed));
+            engine->deck_b().set_gain(ui_gain_b.load(std::memory_order_relaxed));
+            engine->set_master_gain(ui_master.load(std::memory_order_relaxed));
+            const int toggles = ui_play_toggle.exchange(0, std::memory_order_acq_rel);
+            if ((toggles & 1) != 0) {
+                audio::Deck& d = engine->deck_a();
+                if (d.playing()) {
+                    d.stop();
+                } else {
+                    d.play();
+                }
+            }
+            if ((toggles & 2) != 0) {
+                audio::Deck& d = engine->deck_b();
+                if (d.playing()) {
+                    d.stop();
+                } else {
+                    d.play();
+                }
+            }
+
             const auto t0 = std::chrono::steady_clock::now();
             int done = 0;
             while (done < num_samples) {
@@ -341,7 +396,22 @@ bool audio_spike_view(AudioSpikeView* out) {
     audio::Engine& engine = *g_cb.engine;
     out->deck_a_seconds = engine.deck_a().position_seconds();
     out->deck_b_seconds = engine.deck_b().position_seconds();
+    const audio::TrackView& ta = engine.deck_a().track();
+    const audio::TrackView& tb = engine.deck_b().track();
+    out->duration_a_seconds =
+        (ta.sample_rate > 0.0) ? static_cast<double>(ta.frames) / ta.sample_rate : 0.0;
+    out->duration_b_seconds =
+        (tb.sample_rate > 0.0) ? static_cast<double>(tb.frames) / tb.sample_rate : 0.0;
     out->sample_rate = engine.config().sample_rate;
+    out->playing_a = engine.deck_a().playing();
+    out->playing_b = engine.deck_b().playing();
+    out->pitch_a_pct = engine.deck_a().pitch_percent();
+    out->pitch_b_pct = engine.deck_b().pitch_percent();
+    out->peak_a = engine.peak_a();
+    out->peak_b = engine.peak_b();
+    out->master_env = engine.master_env();
+    out->title_a = g_cb.title_a;
+    out->title_b = g_cb.title_b;
     out->pyramid_a = &g_cb.pyr_a;
     out->pyramid_b = &g_cb.pyr_b;
     out->tap_seq = g_cb.tap_seq.load(std::memory_order_acquire);
@@ -349,6 +419,40 @@ bool audio_spike_view(AudioSpikeView* out) {
     out->tap = g_cb.tap_buf[idx];
     out->tap_len = kTapLen;
     return true;
+}
+
+bool audio_spike_load(int deck, const char* path, const char* title) {
+    if (!g_started || deck < 0 || deck > 1 || path == nullptr || path[0] == '\0') {
+        return false;
+    }
+    if (g_cb.pending_load.load(std::memory_order_acquire) >= 0) {
+        return false; // carga anterior aún pendiente
+    }
+    audio::DecodedTrack decoded;
+    std::string error;
+    if (!audio::decode_audio_file(path, &decoded, &error) || decoded.frames <= 0) {
+        std::printf("[f3] decode falló: %s (%s)\n", path, error.c_str());
+        return false;
+    }
+    g_cb.stage[deck] = std::move(decoded);
+    char* t = (deck == 0) ? g_cb.title_a : g_cb.title_b;
+    std::snprintf(t, 128, "%s", (title != nullptr && title[0] != '\0') ? title : path);
+    g_cb.pending_load.store(deck, std::memory_order_release);
+    return true;
+}
+
+void audio_spike_toggle_play(int deck) {
+    if (deck < 0 || deck > 1) {
+        return;
+    }
+    g_cb.ui_play_toggle.fetch_or(1 << deck, std::memory_order_release);
+}
+
+void audio_spike_set_mixer(float crossfader, float gain_a, float gain_b, float master) {
+    g_cb.ui_xf.store(crossfader, std::memory_order_relaxed);
+    g_cb.ui_gain_a.store(gain_a, std::memory_order_relaxed);
+    g_cb.ui_gain_b.store(gain_b, std::memory_order_relaxed);
+    g_cb.ui_master.store(master, std::memory_order_relaxed);
 }
 
 void audio_spike_start(int seconds) {

@@ -53,6 +53,8 @@ add_subdirectory(src/audio)
 
 # ---------------------------------------------------------------- waveform (F2)
 add_subdirectory(src/waveform)
+add_subdirectory(src/analysis)
+add_subdirectory(src/library)
 
 # ------------------------------------------------------------------ tests
 if(MELODEUS_BUILD_TESTS)

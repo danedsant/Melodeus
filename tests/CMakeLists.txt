@@ -9,9 +9,12 @@ add_executable(melodeus_tests
     test_dsp.cpp
     test_engine.cpp
     test_waveform.cpp
+    test_analysis.cpp
+    test_library.cpp
 )
 
-target_link_libraries(melodeus_tests PRIVATE melodeus_core melodeus_audio melodeus_waveform)
+target_link_libraries(melodeus_tests PRIVATE melodeus_core melodeus_audio melodeus_waveform
+    melodeus_analysis melodeus_library)
 target_include_directories(melodeus_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/external/doctest/doctest
 )
