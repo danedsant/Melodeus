@@ -1,0 +1,25 @@
+# Build
+build/
+out/
+cmake-build-*/
+CMakeUserPresets.json
+
+# Dependencies (pobladas por scripts/fetch_deps.ps1; no se versionan)
+external/*
+!external/.gitkeep
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# Artefacts
+*.obj
+*.pdb
+*.ilk
+*.exe
+*.dll
+*.lib
+*.log

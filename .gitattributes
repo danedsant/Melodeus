@@ -1,0 +1,3 @@
+# Normaliza finales de línea en el repo (LF); en Windows se trabajará con el
+# final nativo. Evita que clang-format/CI vean diffs de CRLF.
+* text=auto
