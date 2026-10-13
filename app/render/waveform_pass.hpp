@@ -17,7 +17,7 @@ namespace melodeus::app {
 /// copian junto al exe.
 class WaveformPass {
 public:
-    static constexpr std::size_t kMaxInstances = 8192; // por frame total
+    static constexpr std::size_t kMaxInstances = 32768; // por frame total
 
     bool init(DeviceD3D12& device);
     void shutdown();

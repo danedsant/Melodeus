@@ -69,6 +69,20 @@ TEST_CASE("BPM: click tracks 90 y 140") {
                                          kRate) == doctest::Approx(140.0).epsilon(0.01));
 }
 
+TEST_CASE("BPM: extraccion de fase offset del downbeat") {
+    const auto track = make_click_track(128.0, 6.0);
+    double offset_sec = 0.0;
+    const double bpm = melodeus::analysis::detect_bpm(
+        track.data(), static_cast<std::int64_t>(track.size()), kRate, &offset_sec);
+    CHECK(bpm == doctest::Approx(128.0).epsilon(0.01));
+    CHECK(offset_sec == doctest::Approx(0.05).epsilon(0.02));
+
+    const auto res = melodeus::analysis::analyze_bpm(
+        track.data(), static_cast<std::int64_t>(track.size()), kRate);
+    CHECK(res.bpm == doctest::Approx(128.0).epsilon(0.01));
+    CHECK(res.offset_sec == doctest::Approx(0.05).epsilon(0.02));
+}
+
 TEST_CASE("BPM: señal corta o vacía devuelve 0") {
     std::vector<float> tiny(100, 0.0f);
     CHECK(melodeus::analysis::detect_bpm(tiny.data(), 100, kRate) == 0.0);

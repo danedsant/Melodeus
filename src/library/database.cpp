@@ -1,4 +1,5 @@
 #include "library/database.hpp"
+#include "library/blob.hpp"
 
 #include <sqlite3.h>
 
@@ -402,6 +403,28 @@ int Database::blob_count() const {
     }
     sqlite3_finalize(stmt);
     return n;
+}
+
+bool Database::get_beatgrid(std::int64_t track_id, analysis::BeatGrid* out) const {
+    if (db_ == nullptr || track_id <= 0 || out == nullptr) {
+        return false;
+    }
+    sqlite3_stmt* stmt = nullptr;
+    const char* sql = "SELECT data FROM analysis_blobs WHERE track_id = ? AND kind = 0";
+    if (sqlite3_prepare_v2(static_cast<sqlite3*>(db_), sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return false;
+    }
+    sqlite3_bind_int64(stmt, 1, track_id);
+    bool ok = false;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        const void* blob = sqlite3_column_blob(stmt, 0);
+        const int bytes = sqlite3_column_bytes(stmt, 0);
+        if (blob != nullptr && bytes >= 16) {
+            ok = unpack_beatgrid(static_cast<const std::uint8_t*>(blob), static_cast<std::size_t>(bytes), out);
+        }
+    }
+    sqlite3_finalize(stmt);
+    return ok;
 }
 
 } // namespace melodeus::library

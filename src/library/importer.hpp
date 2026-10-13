@@ -16,6 +16,7 @@ namespace melodeus::library {
 struct ImportResult {
     std::int64_t track_id = -1;
     double bpm = 0.0;
+    double offset_sec = 0.0;
     analysis::KeyInfo key;
     std::string error; ///< vacío si ok
 };

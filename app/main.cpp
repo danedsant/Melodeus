@@ -262,11 +262,22 @@ std::size_t fill_lane(melodeus::wave::WaveInstance* insts, std::size_t cap,
     const double center = center_on_playhead ? pos_sec * rate : total * 0.5;
     const double span_used = center_on_playhead ? span : total;
     const double spp = span_used / static_cast<double>(lane_w_px);
-    const auto range = melodeus::wave::visible_range(pyr, center, span_used, spp);
-    const double first = center - span_used * 0.5;
+    auto range = melodeus::wave::visible_range(pyr, center, span_used, spp);
 
     // Reserva 64 instancias para playhead + marcadores + beat grid.
     constexpr std::size_t kReserve = 64;
+    const std::size_t avail_inst = (cap > kReserve + 1) ? (cap - kReserve - 1) : 1;
+    const std::size_t inst_per_bucket = center_on_playhead ? 1 : 2; // overview crea env + core
+    const std::size_t max_buckets = avail_inst / inst_per_bucket;
+    while ((range.end - range.begin) > static_cast<std::int64_t>(max_buckets) &&
+           range.level + 1 < pyr.levels()) {
+        const int next_lvl = range.level + 1;
+        const double next_spp = static_cast<double>(pyr.bucket_samples(next_lvl));
+        range = melodeus::wave::visible_range(pyr, center, span_used, next_spp);
+    }
+
+    const double first = center - span_used * 0.5;
+
     std::size_t n = melodeus::wave::fill_wave_instances(
         pyr, range, first, span_used, -1.0f, 1.0f, 0.0f, 1.0f, 0.95f, insts,
         cap >= kReserve ? cap - kReserve : 0, marks != nullptr ? marks->cue_rgb : nullptr,
@@ -556,15 +567,8 @@ void draw_chrome(const melodeus::app::RunStats& stats, const wchar_t* adapter, b
     theme::glass(dl, ImVec2(6.0f * scale, 3.0f * scale),
                  ImVec2(width - 6.0f * scale, top_h - 2.0f * scale), 9.0f);
 
-    // Micro logo oficial Colosseum (18x18) antes del wordmark
-    const float logo_icon_sz = 18.0f * scale;
-    const float logo_icon_x = 16.0f * scale;
-    const float logo_icon_y = (top_h - logo_icon_sz) * 0.5f;
-    if (auto tex = melodeus::app::global_logo().texture_id()) {
-        dl->AddImage(tex, ImVec2(logo_icon_x, logo_icon_y),
-                     ImVec2(logo_icon_x + logo_icon_sz, logo_icon_y + logo_icon_sz));
-    }
-    const float text_start_x = logo_icon_x + logo_icon_sz + 8.0f * scale;
+    // Wordmark MELODEUS alineado limpiamente
+    const float text_start_x = 16.0f * scale;
 
     float wordmark_w = 0.0f;
     if (ImFont* title = melodeus::app::imgui_font_title()) {
@@ -865,25 +869,45 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         ::MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY));
 
     HINSTANCE hInst = GetModuleHandle(nullptr);
-    HICON hAppIcon = ::LoadIconW(hInst, MAKEINTRESOURCEW(1));
+    HICON hIconBig = static_cast<HICON>(::LoadImageW(
+        hInst, MAKEINTRESOURCEW(1), IMAGE_ICON,
+        ::GetSystemMetrics(SM_CXICON), ::GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR));
+    HICON hIconSm = static_cast<HICON>(::LoadImageW(
+        hInst, MAKEINTRESOURCEW(1), IMAGE_ICON,
+        ::GetSystemMetrics(SM_CXSMICON), ::GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR));
+    if (!hIconBig) {
+        hIconBig = ::LoadIconW(hInst, MAKEINTRESOURCEW(1));
+    }
+    if (!hIconBig) {
+        hIconBig = ::LoadIconW(hInst, L"IDI_ICON1");
+    }
+    if (!hIconSm) {
+        hIconSm = hIconBig;
+    }
     WNDCLASSEXW wc = {sizeof(wc),
                       CS_CLASSDC,
                       wnd_proc,
                       0L,
                       0L,
                       hInst,
-                      hAppIcon,
+                      hIconBig,
                       nullptr,
                       nullptr,
                       nullptr,
                       L"MelodeusF0",
-                      hAppIcon};
+                      hIconSm};
     ::RegisterClassExW(&wc);
     g_hwnd = ::CreateWindowW(wc.lpszClassName, L"Melodeus", WS_OVERLAPPEDWINDOW, 100,
                              100, static_cast<int>(1440 * scale), static_cast<int>(900 * scale),
                              nullptr, nullptr, wc.hInstance, nullptr);
     if (g_hwnd == nullptr) {
         return 1;
+    }
+    if (hIconBig) {
+        ::SendMessageW(g_hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(hIconBig));
+    }
+    if (hIconSm) {
+        ::SendMessageW(g_hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(hIconSm));
     }
     ::DragAcceptFiles(g_hwnd, TRUE); // Explorer DnD (F3.5)
 
@@ -1149,6 +1173,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             ds.show_beatgrid = melodeus::app::global_settings().show_beatgrid;
             if (ds.bpm > 0.0) {
                 ds.beatgrid = melodeus::analysis::make_beatgrid(ds.bpm, 0.0);
+                const melodeus::library::TrackMeta& m = cached_meta[static_cast<std::size_t>(d)];
+                if (m.track_id > 0) {
+                    g_db.get_beatgrid(m.track_id, &ds.beatgrid);
+                }
             }
         };
 
@@ -1164,6 +1192,16 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
             const melodeus::app::DeckPanelOut dres =
                 melodeus::app::draw_deck_panel(ds, d, side_w, scale);
             if (dres.play_toggled) {
+                if (melodeus::app::global_settings().quantize && !ds.playing && ds.bpm > 0.0) {
+                    const double eff_bpm = ds.bpm_pitched > 0.0 ? ds.bpm_pitched : ds.bpm;
+                    const double beat_len = 60.0 / eff_bpm;
+                    const double sub_beat = beat_len * 0.125;
+                    const double offset = ds.beatgrid.valid() ? ds.beatgrid.offset_sec : 0.0;
+                    const double cur_pos = ds.position_sec;
+                    double snap_pos = offset + std::round((cur_pos - offset) / sub_beat) * sub_beat;
+                    if (snap_pos < 0.0) snap_pos = 0.0;
+                    melodeus::app::audio_spike_seek(d, snap_pos);
+                }
                 melodeus::app::audio_spike_toggle_play(d);
             }
             if (dres.cue_pressed) {
@@ -1206,9 +1244,11 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
                         const double current_pos = (d == 0) ? view.deck_a_seconds : view.deck_b_seconds;
                         const double beat_len = 60.0 / other.bpm_pitched;
                         if (beat_len > 0.001) {
-                            const double master_phase = std::fmod(master_pos, beat_len);
-                            const double cur_beat_idx = std::floor(current_pos / beat_len);
-                            double snap_pos = cur_beat_idx * beat_len + master_phase;
+                            const double master_offset = other.beatgrid.valid() ? other.beatgrid.offset_sec : 0.0;
+                            const double slave_offset = ds.beatgrid.valid() ? ds.beatgrid.offset_sec : 0.0;
+                            const double master_phase = std::fmod(std::max(0.0, master_pos - master_offset), beat_len);
+                            const double cur_beat_idx = std::floor(std::max(0.0, current_pos - slave_offset) / beat_len);
+                            double snap_pos = slave_offset + cur_beat_idx * beat_len + master_phase;
                             if (snap_pos < 0.0) snap_pos = 0.0;
                             melodeus::app::audio_spike_seek(d, snap_pos);
                         }
@@ -1227,8 +1267,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
                 if (dres.hot_cue_set) {
                     double cue_pos = (d == 0) ? view.deck_a_seconds : view.deck_b_seconds;
                     if (melodeus::app::global_settings().quantize && ds.bpm > 0.0) {
-                        const double beat_sec = 60.0 / ds.bpm;
-                        cue_pos = std::round(cue_pos / beat_sec) * beat_sec;
+                        const double eff_bpm = ds.bpm_pitched > 0.0 ? ds.bpm_pitched : ds.bpm;
+                        const double beat_len = 60.0 / eff_bpm;
+                        const double sub_beat = beat_len * 0.125;
+                        const double offset = ds.beatgrid.valid() ? ds.beatgrid.offset_sec : 0.0;
+                        cue_pos = offset + std::round((cue_pos - offset) / sub_beat) * sub_beat;
+                        if (cue_pos < 0.0) cue_pos = 0.0;
                     }
                     hot_cues[d][s] = cue_pos;
                 } else if (hot_cues[d][s] >= 0.0) {
@@ -1648,6 +1692,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
         if (audio_on) {
             melodeus::app::audio_spike_set_mixer(mixer.crossfader, mixer.ch_gain_a, mixer.ch_gain_b,
                                                  mixer.master);
+            melodeus::app::audio_spike_set_crossfade_curve(melodeus::app::global_settings().crossfader_curve);
             for (int ch = 0; ch < 2; ++ch) {
                 melodeus::app::audio_spike_set_eq(ch, mixer.eq_db[ch][0], mixer.eq_db[ch][1],
                                                   mixer.eq_db[ch][2]);

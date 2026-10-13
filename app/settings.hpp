@@ -42,6 +42,7 @@ struct Settings {
     float color_deck_a[3] = {178.0f / 255.0f, 60.0f / 255.0f, 240.0f / 255.0f}; // Electric Purple
     float color_deck_b[3] = {236.0f / 255.0f, 130.0f / 255.0f, 250.0f / 255.0f}; // Hot Purple
     int pitch_range = 16; // 8, 16, 50, 100
+    int crossfader_curve = 2; // 0=Sharp, 1=Linear, 2=ConstantPower, 3=Scratch
     bool quantize = true;
     bool show_beatgrid = true;
     int theme_preset = 0; // 0=Electric Purple, 1=Pioneer Club, 2=Cyberpunk, 3=Acid Neon, etc., -1=Custom

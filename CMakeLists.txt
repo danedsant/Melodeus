@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(melodeus
-    VERSION 0.1.0
+    VERSION 1.1.0
     DESCRIPTION "Melodeus - DJ software de baja latencia para Windows"
     LANGUAGES C CXX)
 

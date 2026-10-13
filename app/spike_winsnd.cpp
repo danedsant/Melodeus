@@ -75,6 +75,7 @@ struct EngineCallback final : juce::AudioIODeviceCallback {
 
     // Inputs de UI aplicados en el hilo de audio (smoothing del motor).
     std::atomic<float> ui_xf{0.0f};
+    std::atomic<int> ui_curve{2}; ///< 0=Sharp, 1=Linear, 2=ConstantPower, 3=Scratch
     std::atomic<float> ui_gain_a{1.0f};
     std::atomic<float> ui_gain_b{1.0f};
     std::atomic<float> ui_master{0.15f};
@@ -122,7 +123,13 @@ struct EngineCallback final : juce::AudioIODeviceCallback {
         scratch_r.assign(max_block, 0.0f);
 
         // Curva y balance del motor
-        engine->set_curve(audio::CrossfadeCurve::ConstantPower);
+        const int init_c = ui_curve.load(std::memory_order_relaxed);
+        audio::CrossfadeCurve cur_c = audio::CrossfadeCurve::ConstantPower;
+        if (init_c == 0) cur_c = audio::CrossfadeCurve::Sharp;
+        else if (init_c == 1) cur_c = audio::CrossfadeCurve::Linear;
+        else if (init_c == 2) cur_c = audio::CrossfadeCurve::ConstantPower;
+        else if (init_c == 3) cur_c = audio::CrossfadeCurve::Scratch;
+        engine->set_curve(cur_c);
         engine->set_crossfader(ui_xf.load(std::memory_order_relaxed));
         engine->set_master_gain(ui_master.load(std::memory_order_relaxed));
         engine->deck_a().set_gain(ui_gain_a.load(std::memory_order_relaxed));
@@ -257,6 +264,14 @@ struct EngineCallback final : juce::AudioIODeviceCallback {
                              ui_eq[1][2].load(std::memory_order_relaxed));
             engine->set_filter_a(ui_filter[0].load(std::memory_order_relaxed));
             engine->set_filter_b(ui_filter[1].load(std::memory_order_relaxed));
+
+            const int rt_c = ui_curve.load(std::memory_order_relaxed);
+            audio::CrossfadeCurve cur_c = audio::CrossfadeCurve::ConstantPower;
+            if (rt_c == 0) cur_c = audio::CrossfadeCurve::Sharp;
+            else if (rt_c == 1) cur_c = audio::CrossfadeCurve::Linear;
+            else if (rt_c == 2) cur_c = audio::CrossfadeCurve::ConstantPower;
+            else if (rt_c == 3) cur_c = audio::CrossfadeCurve::Scratch;
+            engine->set_curve(cur_c);
 
             const auto t0 = std::chrono::steady_clock::now();
             int done = 0;
@@ -633,6 +648,10 @@ void audio_spike_set_mixer(float crossfader, float gain_a, float gain_b, float m
     g_cb.ui_gain_a.store(gain_a, std::memory_order_relaxed);
     g_cb.ui_gain_b.store(gain_b, std::memory_order_relaxed);
     g_cb.ui_master.store(master, std::memory_order_relaxed);
+}
+
+void audio_spike_set_crossfade_curve(int curve) {
+    g_cb.ui_curve.store(curve, std::memory_order_relaxed);
 }
 
 void audio_spike_set_pitch(int deck, float pct) {

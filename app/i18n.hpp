@@ -30,6 +30,7 @@ enum class Str : int {
     QuantizeSnap,
     ShowBeatgrid,
     PitchRangeSetting,
+    CrossfadeCurveSetting,
     StreamingDownloads,
     DefaultDownloadDir,
     BrowseFolder,

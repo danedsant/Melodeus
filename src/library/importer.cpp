@@ -78,7 +78,9 @@ ImportResult import_file(Database& db, const std::filesystem::path& path, int so
         return result;
     }
 
-    result.bpm = analysis::detect_bpm(mono.data(), decoded.frames, decoded.sample_rate);
+    double offset_sec = 0.0;
+    result.bpm = analysis::detect_bpm(mono.data(), decoded.frames, decoded.sample_rate, &offset_sec);
+    result.offset_sec = offset_sec;
     result.key = analysis::detect_key(mono.data(), decoded.frames, decoded.sample_rate);
 
     TrackMeta meta;
@@ -109,7 +111,7 @@ ImportResult import_file(Database& db, const std::filesystem::path& path, int so
     // BLOB del beatgrid (kind=0, Docs §7.2) con SHA-1 de los samples.
     const auto digest =
         melodeus::core::sha1(decoded.samples.data(), decoded.samples.size() * sizeof(float));
-    auto beatgrid = analysis::make_beatgrid(result.bpm, 0.0);
+    auto beatgrid = analysis::make_beatgrid(result.bpm, offset_sec);
     const auto packed = pack_beatgrid(beatgrid);
     if (!db.insert_analysis_blob(result.track_id, kBlobBeatgrid, digest.data(), packed.data(),
                                  packed.size())) {

@@ -10,10 +10,15 @@ namespace {
 
 constexpr int kHop = 512;
 constexpr std::int64_t kMinEnvelopeFrames = 96; // ~1 s a 48 kHz
+constexpr double kPi = 3.14159265358979323846;
 
 } // namespace
 
-double detect_bpm(const float* mono, std::int64_t frames, double sample_rate) {
+double detect_bpm(const float* mono, std::int64_t frames, double sample_rate,
+                  double* out_offset_sec) {
+    if (out_offset_sec != nullptr) {
+        *out_offset_sec = 0.0;
+    }
     if (mono == nullptr || frames <= 0 || sample_rate <= 0.0) {
         return 0.0;
     }
@@ -22,24 +27,38 @@ double detect_bpm(const float* mono, std::int64_t frames, double sample_rate) {
         return 0.0;
     }
 
-    // Envolvente de onset: energía por hop con media-onda rectificada
-    // (diferencia positiva frente al hop anterior).
+    // Filtro Pasa-Bajos simple (~180 Hz) para aislar el kick drum / 808
+    // sin perder los transitorios rítmicos percusivos de banda completa.
+    const double alpha = (2.0 * kPi * 180.0 / sample_rate);
+    const float a_lp = static_cast<float>(std::clamp(alpha / (1.0 + alpha), 0.001, 0.999));
+    float y_lp = 0.0f;
+
+    // Envolvente de onset: energía ponderada (bombo + banda completa)
+    // con compresión perceptual logarítmica y media-onda rectificada.
     std::vector<float> env(static_cast<std::size_t>(n_env), 0.0f);
-    float prev_energy = 0.0f;
+    float prev_energy_comp = 0.0f;
     for (std::int64_t i = 0; i < n_env; ++i) {
         const float* p = mono + i * kHop;
-        float energy = 0.0f;
+        float e_lp = 0.0f;
+        float e_full = 0.0f;
         for (int j = 0; j < kHop; ++j) {
-            energy += p[j] * p[j];
+            const float s = p[j];
+            y_lp += a_lp * (s - y_lp);
+            e_lp += y_lp * y_lp;
+            e_full += s * s;
         }
-        env[static_cast<std::size_t>(i)] = (std::max)(0.0f, energy - prev_energy);
-        prev_energy = energy;
+        // 70% graves (kick/808), 30% transitorios percusivos generales
+        const float mixed_energy = 0.70f * e_lp + 0.30f * e_full;
+        // Compresión perceptual logarítmica para evitar que un solo pico domine
+        const float energy_comp = std::log1p(mixed_energy * 20.0f);
+        env[static_cast<std::size_t>(i)] = (std::max)(0.0f, energy_comp - prev_energy_comp);
+        prev_energy_comp = energy_comp;
     }
 
     // Autocorrelación normalizada por lag (score en [0,1]).
     const double env_rate = sample_rate / static_cast<double>(kHop);
-    const int min_lag = static_cast<int>(env_rate * 60.0 / 180.0);
-    const int max_lag = static_cast<int>(env_rate * 60.0 / 70.0);
+    const int min_lag = static_cast<int>(env_rate * 60.0 / 185.0);
+    const int max_lag = static_cast<int>(env_rate * 60.0 / 68.0);
     if (max_lag <= min_lag + 2 || max_lag >= n_env) {
         return 0.0;
     }
@@ -69,7 +88,7 @@ double detect_bpm(const float* mono, std::int64_t frames, double sample_rate) {
             best_lag = lag;
         }
     }
-    if (best_lag == 0 || best_score < 0.10) {
+    if (best_lag == 0 || best_score < 0.08) {
         return 0.0;
     }
 
@@ -90,18 +109,54 @@ double detect_bpm(const float* mono, std::int64_t frames, double sample_rate) {
 
     double bpm = 60.0 * env_rate / lag_refined;
 
-    // Corrección de octava: si cae por debajo de ~80 y el doble es casi
-    // igual de bueno en la autocorrelación, preferir el doble (banda DJ).
-    if (bpm < 80.0 && best_lag / 2 >= min_lag) {
-        if (score_at(best_lag / 2) >= 0.75 * best_score) {
+    // Corrección de octava EDM multi-género:
+    // Si cae en la ventana half-time (65–88 BPM, ej. Trap 70-75 BPM o DnB 85-88 BPM)
+    // y el armónico superior (doble de velocidad) tiene suficiente correlación (>= 0.46 * best_score),
+    // promovemos al tempo real estándar de DJ club (130–176 BPM).
+    if (bpm >= 65.0 && bpm <= 88.0 && best_lag / 2 >= min_lag) {
+        if (score_at(best_lag / 2) >= 0.46 * best_score) {
             bpm *= 2.0;
+            lag_refined *= 0.5;
         }
-    } else if (bpm > 165.0 && best_lag * 2 <= max_lag) {
+    } else if (bpm > 185.0 && best_lag * 2 <= max_lag) {
         if (score_at(best_lag * 2) >= 0.75 * best_score) {
             bpm *= 0.5;
+            lag_refined *= 2.0;
         }
     }
+
+    // Extracción de fase (downbeat offset en segundos):
+    // Correlaciona la envolvente con un tren de impulsos sintético con periodo lag_refined
+    // en los primeros 16 beats para encontrar el alineamiento exacto del primer compás.
+    if (out_offset_sec != nullptr && bpm > 0.0) {
+        const double beat_period_hops = lag_refined;
+        const int num_beats = std::clamp<int>(static_cast<int>(n_env / std::max(1.0, beat_period_hops)), 1, 16);
+        double best_phase_score = -1.0;
+        double best_phase_hops = 0.0;
+
+        for (double phi = 0.0; phi < beat_period_hops; phi += 0.5) {
+            double psum = 0.0;
+            for (int b = 0; b < num_beats; ++b) {
+                const auto h_idx = static_cast<std::size_t>(std::round(phi + static_cast<double>(b) * beat_period_hops));
+                if (h_idx < env.size()) {
+                    psum += env[h_idx];
+                }
+            }
+            if (psum > best_phase_score) {
+                best_phase_score = psum;
+                best_phase_hops = phi;
+            }
+        }
+        *out_offset_sec = (best_phase_hops * static_cast<double>(kHop)) / sample_rate;
+    }
+
     return bpm;
+}
+
+BpmAnalysis analyze_bpm(const float* mono, std::int64_t frames, double sample_rate) {
+    BpmAnalysis res;
+    res.bpm = detect_bpm(mono, frames, sample_rate, &res.offset_sec);
+    return res;
 }
 
 } // namespace melodeus::analysis

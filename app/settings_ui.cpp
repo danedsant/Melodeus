@@ -2,6 +2,7 @@
 
 #include "i18n.hpp"
 #include "settings.hpp"
+#include "spike_winsnd.hpp"
 #include "theme.hpp"
 #include "render/logo_texture.hpp"
 
@@ -142,6 +143,20 @@ bool draw_settings_modal(bool* open) {
                 }
                 if (ImGui::Combo(tr(Str::PitchRangeSetting), &cur_pr, pr_items, 4)) {
                     s.pitch_range = pr_vals[cur_pr];
+                    s.save(settings_path());
+                }
+
+                const char* xf_items[] = {
+                    "Sharp (Corte Rapido)",
+                    "Lineal",
+                    "Potencia Constante (Suave)",
+                    "Scratch (Turntablism)"
+                };
+                int cur_xf = s.crossfader_curve;
+                if (cur_xf < 0 || cur_xf > 3) cur_xf = 2;
+                if (ImGui::Combo(tr(Str::CrossfadeCurveSetting), &cur_xf, xf_items, 4)) {
+                    s.crossfader_curve = cur_xf;
+                    melodeus::app::audio_spike_set_crossfade_curve(cur_xf);
                     s.save(settings_path());
                 }
 

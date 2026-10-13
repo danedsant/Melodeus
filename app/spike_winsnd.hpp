@@ -75,6 +75,9 @@ void audio_spike_toggle_play(int deck);
 /// Mixer remoto (aplicado en el hilo de audio con smoothing del motor).
 void audio_spike_set_mixer(float crossfader, float gain_a, float gain_b, float master);
 
+/// Curva de crossfader (0=Sharp, 1=Linear, 2=ConstantPower, 3=Scratch).
+void audio_spike_set_crossfade_curve(int curve);
+
 /// Pitch del deck en % (aplicado en el hilo de audio).
 void audio_spike_set_pitch(int deck, float pct);
 

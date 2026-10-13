@@ -123,6 +123,52 @@ TEST_CASE("engine const-power al centro mantiene potencia") {
     CHECK(ga * ga + gb * gb == doctest::Approx(1.0).epsilon(0.001));
 }
 
+TEST_CASE("engine crossfader scratch: corte rapido en extremos y plano en centro") {
+    melodeus::audio::Engine engine({48000.0, 512});
+    engine.set_curve(melodeus::audio::CrossfadeCurve::Scratch);
+    engine.set_limiter_ceiling_db(0.0);
+    const auto a = make_constant(1.0f, 1.0, 48000.0);
+    const auto b = make_constant(1.0f, 1.0, 48000.0);
+    load_play(engine.deck_a(), a);
+    load_play(engine.deck_b(), b);
+
+    std::vector<float> l(256);
+    std::vector<float> r(256);
+    const std::size_t dly = engine.limiter_delay_samples();
+
+    // Centro x = 0.0: ambos al 100% (Scratch flat)
+    engine.set_crossfader(0.0);
+    engine.deck_b().stop();
+    engine.process(l.data(), r.data(), 256);
+    engine.process(l.data(), r.data(), 256);
+    CHECK(l[dly] == doctest::Approx(1.0f).epsilon(1e-4));
+
+    // Extremo A (x = 1.0): A = 1.0, B = 0.0
+    engine.set_crossfader(1.0);
+    engine.deck_a().stop();
+    engine.deck_b().play();
+    engine.process(l.data(), r.data(), 256);
+    engine.process(l.data(), r.data(), 256);
+    CHECK(l[dly] == doctest::Approx(0.0f).epsilon(1e-4));
+}
+
+TEST_CASE("engine master soft-clipper: saturacion C1 transparente hasta 0 dBFS") {
+    melodeus::audio::Engine engine({48000.0, 512});
+    engine.set_curve(melodeus::audio::CrossfadeCurve::Linear);
+    engine.set_limiter_ceiling_db(6.0); // techo alto para medir el clipper
+    const auto a = make_constant(1.0f, 1.0, 48000.0);
+    load_play(engine.deck_a(), a);
+    engine.set_crossfader(1.0); // solo A
+
+    std::vector<float> l(256);
+    std::vector<float> r(256);
+    const std::size_t dly = engine.limiter_delay_samples();
+
+    // Input 1.0f: exactamente 1.0f (transparente por debajo y en 0 dBFS)
+    engine.process(l.data(), r.data(), 256);
+    CHECK(l[dly] == doctest::Approx(1.0f).epsilon(1e-5));
+}
+
 TEST_CASE("engine master gain escala la salida") {
     melodeus::audio::Engine engine({48000.0, 512});
     engine.set_curve(melodeus::audio::CrossfadeCurve::Linear);

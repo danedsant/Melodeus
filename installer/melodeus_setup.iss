@@ -5,7 +5,7 @@
 ; ==============================================================================
 
 #define MyAppName "Melodeus"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "danedsant"
 #define MyAppExeName "Melodeus.exe"
 
@@ -25,7 +25,7 @@ PrivilegesRequiredOverridesAllowed=dialog
 
 ; Directorio de salida y nombre del ejecutable instalador
 OutputDir=Output
-OutputBaseFilename=Melodeus_Setup_v1.0
+OutputBaseFilename=Melodeus_Setup_v1.1
 SetupIconFile=..\app\res\melodeus.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 

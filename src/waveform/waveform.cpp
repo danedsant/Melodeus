@@ -146,38 +146,39 @@ std::size_t fill_wave_instances(const WaveformPyramid& pyramid, const VisibleRan
     const std::int64_t bsize = pyramid.bucket_samples(range.level);
     const double inv_span = 1.0 / samples_visible;
 
-    // Paleta adaptativa de 3 paradas basada en base_rgb:
-    // stop 0 (amp=0): sombra profunda del color del deck
-    // stop 1 (amp=0.6): color base seleccionado del deck
-    // stop 2 (amp=1.0): resalte luminoso pastel/blanco
-    float col_low[3];
-    float col_mid[3];
-    float col_high[3];
+    // Paleta espectral de 3 bandas (Estándar profesional DJ Rekordbox/Traktor):
+    // - Graves (<250 Hz, kicks, sub-bass, 808): tono primario del deck / púrpura eléctrico
+    // - Medios (250-4000 Hz, voces, leads, cajas): ámbar dorado cálido / esmeralda
+    // - Agudos (>4000 Hz, hi-hats, cymbals, aire): cian brillante / blanco hielo
+    float spec_lo[3];
+    float spec_mid[3];
+    float spec_hi[3];
 
     if (base_rgb != nullptr) {
-        col_mid[0] = std::clamp(base_rgb[0], 0.0f, 1.0f);
-        col_mid[1] = std::clamp(base_rgb[1], 0.0f, 1.0f);
-        col_mid[2] = std::clamp(base_rgb[2], 0.0f, 1.0f);
+        spec_lo[0] = std::clamp(base_rgb[0] * 1.15f, 0.0f, 1.0f);
+        spec_lo[1] = std::clamp(base_rgb[1] * 0.85f, 0.0f, 1.0f);
+        spec_lo[2] = std::clamp(base_rgb[2] * 1.15f, 0.0f, 1.0f);
 
-        col_low[0] = col_mid[0] * 0.18f;
-        col_low[1] = col_mid[1] * 0.18f;
-        col_low[2] = col_mid[2] * 0.18f + 0.04f;
+        spec_mid[0] = 0.92f;
+        spec_mid[1] = 0.76f;
+        spec_mid[2] = 0.24f;
 
-        col_high[0] = col_mid[0] + (1.0f - col_mid[0]) * 0.45f;
-        col_high[1] = col_mid[1] + (1.0f - col_mid[1]) * 0.45f;
-        col_high[2] = col_mid[2] + (1.0f - col_mid[2]) * 0.45f;
+        spec_hi[0] = 0.55f;
+        spec_hi[1] = 0.95f;
+        spec_hi[2] = 1.00f;
     } else {
-        col_low[0] = 18.0f / 255.0f;
-        col_low[1] = 32.0f / 255.0f;
-        col_low[2] = 92.0f / 255.0f;
+        // Melodeus Electric Purple spectral palette
+        spec_lo[0] = 178.0f / 255.0f;
+        spec_lo[1] = 60.0f / 255.0f;
+        spec_lo[2] = 240.0f / 255.0f;
 
-        col_mid[0] = 178.0f / 255.0f;
-        col_mid[1] = 60.0f / 255.0f;
-        col_mid[2] = 240.0f / 255.0f;
+        spec_mid[0] = 0.92f;
+        spec_mid[1] = 0.76f;
+        spec_mid[2] = 0.24f;
 
-        col_high[0] = 236.0f / 255.0f;
-        col_high[1] = 130.0f / 255.0f;
-        col_high[2] = 250.0f / 255.0f;
+        spec_hi[0] = 0.55f;
+        spec_hi[1] = 0.95f;
+        spec_hi[2] = 1.00f;
     }
 
     std::size_t n = 0;
@@ -189,9 +190,9 @@ std::size_t fill_wave_instances(const WaveformPyramid& pyramid, const VisibleRan
         wl.x1 = ndc_x1;
         wl.y0 = ndc_y_center - 0.012f;
         wl.y1 = ndc_y_center + 0.012f;
-        wl.r = col_low[0] * 1.5f;
-        wl.g = col_low[1] * 1.5f;
-        wl.b = col_low[2] * 1.5f;
+        wl.r = spec_lo[0] * 0.25f;
+        wl.g = spec_lo[1] * 0.25f;
+        wl.b = spec_lo[2] * 0.25f;
     }
 
     for (std::int64_t i = range.begin; i < range.end && n < max_out; ++i) {
@@ -203,6 +204,19 @@ std::size_t fill_wave_instances(const WaveformPyramid& pyramid, const VisibleRan
         const float a0 = bk.min * amplitude_scale;
         const float a1 = bk.max * amplitude_scale;
 
+        // Mezcla espectral aditiva de 3 bandas ponderada por energías
+        const float s_lo = bk.lo;
+        const float s_mid = bk.mid;
+        const float s_hi = bk.hi;
+        const float s_sum = s_lo + s_mid + s_hi + 1e-6f;
+        const float w_lo = s_lo / s_sum;
+        const float w_mid = s_mid / s_sum;
+        const float w_hi = s_hi / s_sum;
+
+        const float sr = w_lo * spec_lo[0] + w_mid * spec_mid[0] + w_hi * spec_hi[0];
+        const float sg = w_lo * spec_lo[1] + w_mid * spec_mid[1] + w_hi * spec_hi[1];
+        const float sb = w_lo * spec_lo[2] + w_mid * spec_mid[2] + w_hi * spec_hi[2];
+
         if (is_overview) {
             // Capa 1: Envolvente exterior de picos transitorios (silueta tenue)
             WaveInstance& w_env = out[n++];
@@ -210,11 +224,11 @@ std::size_t fill_wave_instances(const WaveformPyramid& pyramid, const VisibleRan
             w_env.x1 = x1;
             w_env.y0 = ndc_y_center + ndc_y_half * a0;
             w_env.y1 = ndc_y_center + ndc_y_half * a1;
-            w_env.r = col_low[0];
-            w_env.g = col_low[1];
-            w_env.b = col_low[2];
+            w_env.r = std::clamp(sr * 0.40f, 0.0f, 1.0f);
+            w_env.g = std::clamp(sg * 0.40f, 0.0f, 1.0f);
+            w_env.b = std::clamp(sb * 0.40f, 0.0f, 1.0f);
 
-            // Capa 2: Núcleo interior de energía RMS con modulación espectral
+            // Capa 2: Núcleo interior de energía RMS con modulación espectral luminosa
             if (n < max_out) {
                 const float rms_norm = std::clamp(bk.rms * 1.85f * amplitude_scale, 0.02f, 0.95f);
                 WaveInstance& w_core = out[n++];
@@ -223,11 +237,10 @@ std::size_t fill_wave_instances(const WaveformPyramid& pyramid, const VisibleRan
                 w_core.y0 = ndc_y_center - ndc_y_half * rms_norm;
                 w_core.y1 = ndc_y_center + ndc_y_half * rms_norm;
 
-                // Color dinámico según energía RMS
-                const float t = rms_norm;
-                w_core.r = col_mid[0] + (col_high[0] - col_mid[0]) * t;
-                w_core.g = col_mid[1] + (col_high[1] - col_mid[1]) * t;
-                w_core.b = col_mid[2] + (col_high[2] - col_mid[2]) * t;
+                const float core_bright = 0.65f + 0.35f * rms_norm;
+                w_core.r = std::clamp(sr * core_bright, 0.0f, 1.0f);
+                w_core.g = std::clamp(sg * core_bright, 0.0f, 1.0f);
+                w_core.b = std::clamp(sb * core_bright, 0.0f, 1.0f);
             }
         } else {
             WaveInstance& w = out[n++];
@@ -235,18 +248,12 @@ std::size_t fill_wave_instances(const WaveformPyramid& pyramid, const VisibleRan
             w.x1 = x1;
             w.y0 = ndc_y_center + ndc_y_half * a0;
             w.y1 = ndc_y_center + ndc_y_half * a1;
+
             const float amp = std::clamp(std::max(std::fabs(a0), std::fabs(a1)), 0.0f, 1.0f);
-            if (amp <= 0.6f) {
-                const float t = amp / 0.6f;
-                w.r = col_low[0] + (col_mid[0] - col_low[0]) * t;
-                w.g = col_low[1] + (col_mid[1] - col_low[1]) * t;
-                w.b = col_low[2] + (col_mid[2] - col_low[2]) * t;
-            } else {
-                const float t = (amp - 0.6f) / 0.4f;
-                w.r = col_mid[0] + (col_high[0] - col_mid[0]) * t;
-                w.g = col_mid[1] + (col_high[1] - col_mid[1]) * t;
-                w.b = col_mid[2] + (col_high[2] - col_mid[2]) * t;
-            }
+            const float bright = 0.45f + 0.55f * amp;
+            w.r = std::clamp(sr * bright, 0.0f, 1.0f);
+            w.g = std::clamp(sg * bright, 0.0f, 1.0f);
+            w.b = std::clamp(sb * bright, 0.0f, 1.0f);
         }
     }
     return n;

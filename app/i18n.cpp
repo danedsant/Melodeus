@@ -48,6 +48,8 @@ const char* kStrings[static_cast<int>(Str::Count)][3] = {
      "Mostrar Beatgrid na Waveform"},
     // PitchRangeSetting
     {"Rango Pitch", "Pitch Range", "Faixa de Pitch"},
+    // CrossfadeCurveSetting
+    {"Curva Crossfader", "Crossfader Curve", "Curva Crossfader"},
     // StreamingDownloads
     {"Descargas de Streaming (YouTube / SoundCloud)", "Streaming Downloads (YouTube / SoundCloud)",
      "Downloads de Streaming (YouTube / SoundCloud)"},

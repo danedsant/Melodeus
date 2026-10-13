@@ -179,3 +179,31 @@ TEST_CASE("fft sin allocs en compute") {
     }
     CHECK(fft.bins() == 512);
 }
+
+TEST_CASE("pirámide: soporte pistas largas y coloración espectral 3-bandas") {
+    // 524,288 muestras (~11 segundos) para alcanzar niveles superiores
+    const std::int64_t n_samples = 524288;
+    std::vector<float> sig(static_cast<std::size_t>(n_samples), 0.25f);
+    melodeus::wave::WaveformPyramid pyr;
+    pyr.build(sig.data(), n_samples, 1, 48000.0);
+    CHECK(pyr.levels() >= 10);
+    CHECK(pyr.bucket_samples(pyr.levels() - 1) >= 65536);
+
+    const auto ov = melodeus::wave::visible_range(pyr, n_samples * 0.5, static_cast<double>(n_samples),
+                                                  static_cast<double>(n_samples) / 800.0);
+    CHECK(ov.begin == 0);
+    CHECK(ov.end == pyr.bucket_count(ov.level));
+
+    std::vector<melodeus::wave::WaveInstance> insts(1024);
+    const float base_col[3] = {0.70f, 0.23f, 0.94f};
+    const std::size_t count = melodeus::wave::fill_wave_instances(
+        pyr, ov, 0.0, static_cast<double>(n_samples), -1.0f, 1.0f, 0.0f, 1.0f, 1.0f,
+        insts.data(), insts.size(), base_col, true);
+    CHECK(count > 0);
+    // Verificar que las instancias generadas tienen componentes de color validos
+    for (std::size_t i = 0; i < count; ++i) {
+        CHECK(insts[i].r >= 0.0f);
+        CHECK(insts[i].g >= 0.0f);
+        CHECK(insts[i].b >= 0.0f);
+    }
+}

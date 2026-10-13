@@ -221,6 +221,8 @@ bool Settings::load(const std::string& path) {
             if (pitch_range != 8 && pitch_range != 16 && pitch_range != 50 && pitch_range != 100) {
                 pitch_range = 16;
             }
+        } else if (key == "crossfader_curve") {
+            crossfader_curve = std::clamp(std::atoi(val.c_str()), 0, 3);
         } else if (key == "quantize") {
             quantize = (val == "1" || val == "true");
         } else if (key == "show_beatgrid") {
@@ -260,6 +262,7 @@ bool Settings::save(const std::string& path) const {
                   static_cast<double>(color_deck_b[1]), static_cast<double>(color_deck_b[2]));
     out << "color.deck_b=" << cbuf << "\n";
     out << "pitch.range=" << pitch_range << "\n";
+    out << "crossfader_curve=" << crossfader_curve << "\n";
     out << "quantize=" << (quantize ? "1" : "0") << "\n";
     out << "show_beatgrid=" << (show_beatgrid ? "1" : "0") << "\n";
     out << "theme.preset=" << theme_preset << "\n";

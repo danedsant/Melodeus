@@ -98,8 +98,24 @@ void Engine::process(float* out_l, float* out_r, std::size_t n) noexcept {
         const float ra = scratch_a_r_[i];
         const float lb = scratch_b_l_[i];
         const float rb = scratch_b_r_[i];
-        out_l[i] = static_cast<float>(la * ga + lb * gb);
-        out_r[i] = static_cast<float>(ra * ga + rb * gb);
+        float ml = static_cast<float>(la * ga + lb * gb);
+        float mr = static_cast<float>(ra * ga + rb * gb);
+
+        // Saturador suave (Master Soft Clipper): respuesta C1 transparente
+        // en [-1.0, 1.0] con saturación hiperbólica suave en picos > 0 dBFS.
+        if (ml > 1.0f) {
+            ml = 1.0f + std::tanh(ml - 1.0f);
+        } else if (ml < -1.0f) {
+            ml = -1.0f + std::tanh(ml + 1.0f);
+        }
+        if (mr > 1.0f) {
+            mr = 1.0f + std::tanh(mr - 1.0f);
+        } else if (mr < -1.0f) {
+            mr = -1.0f + std::tanh(mr + 1.0f);
+        }
+
+        out_l[i] = ml;
+        out_r[i] = mr;
         pa = std::max(pa, std::max(std::fabs(la), std::fabs(ra)));
         pb = std::max(pb, std::max(std::fabs(lb), std::fabs(rb)));
     }

@@ -1,11 +1,11 @@
 # Melodeus DJ Workstation — Manual de Arquitectura y Especificación Técnica
 
 > **Documento de Referencia Técnica de Ingeniería**  
-> **Versión del Sistema**: v1.0.0 (Windows 10/11 x64)  
+> **Versión del Sistema**: v1.1.0 (Windows 10/11 x64)  
 > **Orquestación y Arquitectura**: danedsant  
 > **Plataformas de Ingeniería**: Antigravity & OpenCode  
 > **Modelo de Inteligencia Artificial**: Gemini 3.8 Flash High (Google DeepMind)  
-> **Cómputo Cognitivo**: ~14.5M tokens procesados en el ciclo de diseño, DSP, shaders y empaquetado  
+> **Cómputo Cognitivo**: ~15.2M tokens procesados en el ciclo de diseño, DSP, shaders y empaquetado  
 
 ---
 
@@ -135,14 +135,30 @@ $$R(k) = \sum_{n=0}^{N-1} x(n) \cdot y(n+k)$$
   - Capacidad de **Kill** completo (−60 dB) en cualquiera de las tres bandas.
   - Parámetros dinámicos gobernados por filtros paso-bajo unipolares de suavizado (*one-pole parameter smoothing*, $\tau = 10\text{ ms}$) que eliminan completamente el efecto *zipper noise* al girar knobs en la pantalla.
 
-### 3.4. Limitador Brickwall Lookahead (`dsp.hpp`)
+### 3.4. Saturador Suave (Master Soft-Clipper) y Headroom (`engine.cpp`)
 
-Para evitar distorsión digital (*clipping* a 0 dBFS) en la salida master al mezclar ambos decks:
+Para eliminar distorsión armónica áspera (*digital harsh clipping*) cuando dos pistas modernas normalizadas a 0 dBFS se suman durante una transición o drop, o cuando el usuario aplica un realce de EQ (+6 dB en Low):
+- **Saturación Hiperbólica Continua $C^1$**: En lugar de recortar bruscamente a ±1.0, la suma de mezcla se procesa mediante una curva no lineal suave basada en tangente hiperbólica:
+  $$f(x) = \begin{cases} x & \text{si } |x| \le 1.0 \\ \text{sgn}(x) \cdot (1.0 + \tanh(|x| - 1.0)) & \text{si } |x| > 1.0 \end{cases}$$
+  Esta función es estrictamente idéntica a la señal original con cero distorsión armónica hasta 0 dBFS ($f'(1.0) = 1.0$), y comprime de forma analógica y cálida cualquier sobrecarga extrema antes de entrar al limitador brickwall.
+
+### 3.5. Curvas del Crossfader y Turntablism Scratch (`mixer.hpp`)
+
+El motor de mezcla soporta 4 curvas paramétricas seleccionables por el usuario en tiempo real:
+1. **Sharp (Corte DJ)**: Salto binario estricto en el punto central (ideal para cortes secos de club).
+2. **Linear**: Ganancias complementarias $G_A = t$, $G_B = 1 - t$.
+3. **Constant Power (Trigonométrica Suave)**: Conserva la potencia acústica total idéntica ($0\text{ dB}$) a lo largo de todo el recorrido:
+   $$G_A = \cos((1 - t) \cdot \frac{\pi}{2}), \quad G_B = \sin((1 - t) \cdot \frac{\pi}{2})$$
+4. **Scratch (Turntablism)**: Mantiene el volumen al 100% ($G = 1.0$) en prácticamente todo el trayecto, aplicando una rampa ultrarrápida en el último 3% de los bordes para cortes agresivos sin clics DC.
+
+### 3.6. Limitador Brickwall Lookahead (`dsp.hpp`)
+
+Para garantizar que el máster nunca exceda el techo acústico (−1.0 dBFS):
 - **Retardo Lookahead**: Búfer circular de retardo de **2.0 ms** (96 muestras a 48 kHz).
 - **Búsqueda del Pico Máximo**: Se mantiene una cola monótona preasignada para detectar picos futuros en la ventana de lookahead.
 - **Curva de Reducción**: Si el pico futuro excede el techo (−1.0 dBFS), la ganancia se atenúa instantáneamente antes de que la señal alcance la salida, con un tiempo de relajación (*release*) suave de 100 ms.
 
-### 3.5. Verificación de Hardware y Manejo del Bug de 64 kHz
+### 3.7. Verificación de Hardware y Manejo del Bug de 64 kHz
 
 Durante las pruebas en hardware real de audio integrado (Realtek HD Audio en Windows 10/11), se descubrió que el endpoint WASAPI Exclusivo reportaba aceptar 48 kHz pero el reloj de hardware `IAudioClock` corría a **64 kHz exactos**, resultando en una aceleración del tono de +33%.
 - **Medida adoptada**: `tools/latency_probe` y `main.cpp` ejecutan una prueba de conformidad con `IAudioClock` al inicializar. Si la tasa medida difiere en más de 1% de la declarada, el sistema conmuta automáticamente a **WASAPI Compartido de baja latencia (`IAudioClient3`)** a 48 kHz con períodos de 10 ms, protegiendo al usuario de fallos de hardware.
@@ -153,15 +169,18 @@ Durante las pruebas en hardware real de audio integrado (Realtek HD Audio en Win
 
 El renderizado gráfico opera sobre una infraestructura nativa Direct3D 12 diseñada para mantener 144 FPS estables sin pausas de recolección de basura ni sincronización de comandos costosa.
 
-### 4.1. Pirámide de Formas de Onda Multinivel (`waveform.hpp` / `waveform.cpp`)
+### 4.1. Pirámide de Formas de Onda Multinivel y Decimación Adaptativa (`waveform.hpp` / `waveform.cpp`)
 
-Para visualizar canciones de hasta 10 minutos sin consumir memoria excesiva en GPU ni procesar millones de muestras por fotograma:
-- **Estructura Piramidal**: El archivo de audio se subdivide en una jerarquía de niveles por potencias de 2 (desde 256 muestras por bloque en el nivel más detallado hasta 32,768 muestras por bloque en el nivel más amplio).
-- **Tri-Color Espectral (RGB Bands)**: Cada bloque almacena tres valores de amplitud filtrados:
-  - **Rojo (Low)**: Energía en bajas frecuencias (bombos, bajos).
-  - **Verde (Mid)**: Energía en frecuencias medias (voces, sintetizadores).
-  - **Azul (High)**: Energía en altas frecuencias (hi-hats, platillos, transientes).
-- **Selección de Nivel Óptima**: La función `pick_level(visible_seconds, pixel_width)` determina matemáticamente el nivel de detalle exacto para que cada píxel de pantalla corresponda a un bucket de la pirámide, garantizando coste de dibujo constante $O(1)$ independiente de la duración de la canción.
+Para visualizar archivos de cualquier duración —desde pistas estándar de 3 minutos hasta **DJ mixes y podcasts masivos de 60 a 120+ minutos**— sin desbordamiento de búferes ni caídas de framerate:
+- **Pirámide de 12 Niveles de Resolución**: El audio se subdivide en una jerarquía que abarca desde 256 muestras por bloque en el nivel 0 hasta **524,288 muestras por bloque en el nivel 11**. Una sesión de 2 horas a 48 kHz genera únicamente ~660 bloques en el nivel superior.
+- **Prevención Definitiva de Truncamiento**: La función `fill_lane` y `visible_range` incorporan una decimación adaptativa que evalúa la capacidad de instancias disponibles (`avail_inst = 8,192` por carril, parte de una capacidad total ampliada a **32,768 instancias** en `WaveformPass`). Si una pista de gran extensión requiere más bloques de los que caben en el búfer, el sistema escala automáticamente al siguiente nivel de la pirámide, garantizando que el 100% de la pista (de 0:00 al final) se visualice íntegramente sin cortes.
+- **Coloración Espectral Tri-Banda (Estándar DJ Rekordbox / Traktor)**: En lugar de un gradiente cosmético genérico, cada `WaveBucket` calcula la energía en 3 bandas filtradas mediante `TptSvf`:
+  - **Graves / Kicks / 808 (`bk.lo`, <250 Hz)**: Canal primario del deck (Púrpura Eléctrico vibrante o tinte custom), permitiendo identificar visualmente cada golpe de bombo y línea de subgrave.
+  - **Medios / Voces / Cajas (`bk.mid`, 250 Hz – 4 kHz)**: Tono cálido de transición (Ámbar dorado / Esmeralda), destacando estrofas, sintetizadores y cajas.
+  - **Altos / Hi-Hats / Cymbals (`bk.hi`, >4 kHz)**: Tono brillante (Cian luminoso / Blanco hielo), revelando platillos, shakers y transientes de aire.
+- **Visualización Doble en Overview**:
+  - **Capa Exterior**: Envolvente tenue de transitorios que delimita la silueta completa del track.
+  - **Capa Interior**: Núcleo dinámico de energía RMS modulado con la mezcla espectral luminosa, permitiendo al DJ distinguir drops, breakdowns y secciones vocales a simple vista.
 
 ### 4.2. Shaders HLSL Instanciados (`waveform.hlsl`)
 
@@ -257,10 +276,24 @@ CREATE VIRTUAL TABLE tracks_fts USING fts5 (
 $$r = \frac{\sum (x_i - \bar{x})(y_i - \bar{y})}{\sqrt{\sum (x_i - \bar{x})^2 \sum (y_i - \bar{y})^2}}$$
 - **Mapeo Camelot**: El tono detectado se indexa en el estándar DJ de la Rueda de Camelot (ej. $A\text{ menor} \rightarrow 8A$, $C\text{ mayor} \rightarrow 8B$), permitiendo mezclas armónicas intuitivas por proximidad numérica.
 
-### 6.3. Detección de Tempo y Beatgrid (`detect_bpm`)
+### 6.3. Motor de BPM Multi-Género EDM, Extracción de Fase y Quantize (`bpm.cpp` / `beatgrid.cpp`)
 
-- **Envolvente de Onsets**: Se extrae la curva de flujo espectral (*spectral flux*) detectando cambios abruptos de energía en frecuencias bajas.
-- **Autocorrelación**: La función de autocorrelación sobre la curva de onsets revela el periodo dominante del ritmo, acotado entre 70 y 180 BPM con resolución de corrección de octava (duplicación o división por la mitad).
+El sistema de análisis rítmico está optimizado integralmente para todo el espectro de música electrónica de club y festivales (House, Tech House, Techno, Trance, Hardstyle, Drum & Bass, Trap y Dubstep):
+1. **Pre-Filtrado Pasa-Bajos de Onsets (~180 Hz)**:
+   - Aplica un filtro unipolar de 180 Hz sobre la señal mono para aislar los transitorios fundamentales del bombo (*kick drum*) y líneas 808 frente a sintetizadores densos (*supersaws*), voces o platos.
+   - Ponderación híbrida: combina un 70% de energía filtrada en graves con un 30% de energía de banda completa, asegurando detección precisa tanto en bombos profundos como en patrones percusivos de caja/click.
+2. **Compresión Perceptual Logarítmica**:
+   - Transforma la energía cuadrática mediante $E_{\text{comp}} = \ln(1 + 20 \cdot E)$ antes de calcular la media-onda rectificada de flujo espectral. Esto previene que un único transitorio descomunal (como un drop con crash o efecto vocal) distorsione la autocorrelación.
+3. **Corrección de Octavas para Half-Time EDM (Trap, Dubstep y Drum & Bass)**:
+   - En géneros urbanos y bass music (Trap/Dubstep a 140–150 BPM y DnB a 170–176 BPM), los patrones half-time suelen presentar picos fundamentales a 70–75 BPM y 85–88 BPM.
+   - Si el tempo preliminar cae en el rango [65, 88] BPM, el algoritmo evalúa el armónico superior (`best_lag / 2`) con un umbral optimizado de confianza de **0.46** (frente al 0.75 tradicional). Esto promueve automáticamente pistas de Trap/Dubstep a 140+ BPM y Drum & Bass a 170+ BPM, manteniendo inmunes los temas de 90 BPM (Hip-Hop) y 120–135 BPM (House/Techno).
+4. **Extracción de Fase (Downbeat Offset en Segundos)**:
+   - Una vez consolidado el periodo de beat (`lag_refined`), el motor realiza una correlación cruzada de la envolvente contra un tren de impulsos sintético a lo largo de los primeros 16 compases.
+   - El ángulo de fase óptimo $\phi^*$ determina la posición exacta en segundos del primer golpe de compás (`offset_sec`), empaquetándose en el BLOB de análisis `analysis_blobs` (kind = 0) en SQLite.
+5. **Cuantización de Transporte Snap-to-Grid (1/8 de Beat)**:
+   - Cuando `Quantize` está activo en ajustes, tanto el inicio de reproducción (*Play*), como el guardado y salto a *Hot Cues (1..3)* y la sincronización *SYNC* se alinean automáticamente al punto submúltiplo de 1/8 de compás más cercano de la cuadrícula:
+     $$\text{pos}_{\text{snap}} = \text{offset}_{\text{sec}} + \text{round}\left(\frac{\text{pos} - \text{offset}_{\text{sec}}}{T_{\text{beat}} / 8}\right) \cdot \frac{T_{\text{beat}}}{8}$$
+   - Esto garantiza que dos pistas sincronizadas mantengan un *beatmatching* de fase absoluto con los transitorios de bombo milimétricamente alineados.
 
 ---
 
@@ -270,7 +303,7 @@ $$r = \frac{\sum (x_i - \bar{x})(y_i - \bar{y})}{\sqrt{\sum (x_i - \bar{x})^2 \s
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│ [LOGO] MELODEUS   [AJUSTES]   [QUANTIZE]   [AYUDA]    14:25:02  CPU 4% │
+│ MELODEUS          [AJUSTES]   [QUANTIZE]   [AYUDA]    14:25:02  CPU 4% │
 ├─────────────────────────┬──────────────────┬───────────────────────────┤
 │         DECK A          │   MIXER MASTER   │          DECK B           │
 │  - Forma de onda Wave   │ - Gain A  Gain B │  - Forma de onda Wave     │
@@ -314,6 +347,7 @@ Los parámetros del usuario se guardan automáticamente en formato JSON junto al
 - Idioma seleccionado (`lang`: 0=ES, 1=EN, 2=PT-BR).
 - Mapeo de teclas (`keys`: arreglo de identificadores `ImGuiKey` para cada acción).
 - Colores personalizados de los decks (`color_deck_a`, `color_deck_b`).
+- Curva de Crossfader seleccionada (`crossfade_curve`: Linear, Sharp, ConstantPower, Scratch).
 - Estado del motor de cuantización (`quantize`).
 - Directorio de descargas (`download_dir`).
 
@@ -329,19 +363,30 @@ Los parámetros del usuario se guardan automáticamente en formato JSON junto al
 
 ### 9.1. Recursos de Aplicación (`melodeus.rc`)
 
-El archivo de recursos de Windows vincula el icono oficial `melodeus.ico` con el identificador `IDI_ICON1` (1). En `main.cpp`, `wWinMain` carga este icono mediante:
+El archivo de recursos de Windows vincula el icono oficial `melodeus.ico` con el identificador numérico `#define IDI_ICON1 1`. En `main.cpp`, `wWinMain` carga este icono mediante métricas del sistema para obtener renderizado nítido en alta resolución y lo asocia directamente a la ventana:
 ```cpp
 HINSTANCE hInst = GetModuleHandle(nullptr);
-HICON hAppIcon = ::LoadIconW(hInst, MAKEINTRESOURCEW(1));
-wc.hIcon = hAppIcon;
-wc.hIconSm = hAppIcon;
+HICON hIconBig = static_cast<HICON>(::LoadImageW(
+    hInst, MAKEINTRESOURCEW(1), IMAGE_ICON,
+    ::GetSystemMetrics(SM_CXICON), ::GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR));
+HICON hIconSm = static_cast<HICON>(::LoadImageW(
+    hInst, MAKEINTRESOURCEW(1), IMAGE_ICON,
+    ::GetSystemMetrics(SM_CXSMICON), ::GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR));
+if (!hIconBig) hIconBig = ::LoadIconW(hInst, MAKEINTRESOURCEW(1));
+if (!hIconSm) hIconSm = hIconBig;
+wc.hIcon = hIconBig;
+wc.hIconSm = hIconSm;
+
+// Tras CreateWindowW:
+::SendMessageW(g_hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(hIconBig));
+::SendMessageW(g_hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(hIconSm));
 ```
-Esto garantiza que la ventana de la aplicación, la barra de tareas de Windows y el Explorador muestren el logotipo oficial en todas las resoluciones de pantalla (desde 16×16 hasta 256×256 px).
+Esto garantiza que la ventana de la aplicación, la barra de tareas de Windows, la barra de título Win32 y el Explorador de archivos muestren el logotipo oficial sin bordes borrosos en todas las resoluciones de pantalla (desde 16×16 hasta 256×256 px).
 
 ### 9.2. Instalador Inno Setup 6 (`installer/melodeus_setup.iss`)
 
 El instalador autónomo empaqueta todo el entorno para que cualquier usuario pueda instalarlo y pinchar inmediatamente:
-- **Compresión Sólida LZMA2**: Reduce el conjunto de archivos (~155 MB de binarios, shaders, fuentes, `yt-dlp.exe` y `ffmpeg.exe`) a un archivo único de **63.5 MB** (`Melodeus_Setup_v1.0.exe`).
+- **Compresión Sólida LZMA2**: Reduce el conjunto de archivos (~160 MB de binarios, shaders, fuentes, `yt-dlp.exe` y `ffmpeg.exe`) a un archivo único de **~66.7 MB** (`Melodeus_Setup_v1.1.exe`).
 - **Herramientas de Streaming Incluidas**: `yt-dlp.exe` y `ffmpeg.exe` se colocan en `{app}\tools` y `{app}\external`. La función `find_external_tool` en `main.cpp` los localiza automáticamente al arrancar.
 - **Gráficos Integrados**: Incorpora el banner vertical con el logotipo (`banner.bmp`) y el icono superior (`small.bmp`).
 - **Instalación Multi-Idioma**: Asistente disponible en Español, Inglés y Portugués (Brasil).
@@ -353,11 +398,11 @@ El instalador autónomo empaqueta todo el entorno para que cualquier usuario pue
 ### 10.1. Pruebas Unitarias y Selftest Automatizado
 
 - **Suite Doctest (`melodeus_tests.exe`)**:
-  - **82 casos de prueba** cubriendo transporte de audio, interpolación fraccional, análisis espectral, transcodificación de streaming, base de datos SQLite y pirámides de waveform.
-  - **62,341 aserciones matemáticas** aprobadas sin fallos.
+  - **86 casos de prueba** cubriendo transporte de audio, interpolación fraccional, análisis espectral, transcodificación de streaming, base de datos SQLite, pirámides de waveform multinivel y cuantización snap-to-grid.
+  - **65,429 aserciones matemáticas** aprobadas al 100% sin fallos.
 - **Selftest de Rendimiento D3D12 (`Melodeus.exe --selftest 2`)**:
   - Ejecuta el motor completo a máxima velocidad durante 2 segundos.
-  - Verifica que el renderizado alcance $\ge 144\text{ FPS}$ en DirectX 12 (verificado a **381.8 FPS** en GPU integrada Intel UHD 620).
+  - Verifica que el renderizado alcance $\ge 144\text{ FPS}$ en DirectX 12 (verificado a **291.6 FPS** sostenidos).
 
 ### 10.2. Licencias de Componentes de Terceros
 

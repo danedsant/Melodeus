@@ -24,7 +24,7 @@ struct WaveBucket {
 class WaveformPyramid {
 public:
     static constexpr std::int64_t kBaseBucketSamples = 256;
-    static constexpr int kMaxLevels = 8; // 256 .. 32768 muestras/bucket
+    static constexpr int kMaxLevels = 12; // 256 .. 524288 muestras/bucket
 
     /// Construye desde muestras interleaved (promedio a mono para la onda).
     void build(const float* interleaved, std::int64_t frames, int channels, double sample_rate);

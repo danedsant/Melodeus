@@ -13,13 +13,13 @@
   <img src="https://img.shields.io/badge/DirectX%2012-144%20FPS-B23CF0?style=for-the-badge&logo=windows&logoColor=white" alt="DirectX 12"/>
   <img src="https://img.shields.io/badge/Audio-WASAPI%20%7C%20ASIO%20%3C5ms-B23CF0?style=for-the-badge" alt="Low Latency Audio"/>
   <img src="https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-B23CF0?style=for-the-badge&logo=windows&logoColor=white" alt="Windows x64"/>
-  <img src="https://img.shields.io/badge/Tests-82%2F82%20Passing-B23CF0?style=for-the-badge" alt="Tests"/>
-  <img src="https://img.shields.io/badge/Installer-Inno%20Setup%20v1.0-B23CF0?style=for-the-badge" alt="Installer"/>
+  <img src="https://img.shields.io/badge/Tests-86%2F86%20Passing-B23CF0?style=for-the-badge" alt="Tests"/>
+  <img src="https://img.shields.io/badge/Installer-Inno%20Setup%20v1.1-B23CF0?style=for-the-badge" alt="Installer"/>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/AI%20Model-Gemini%203.8%20Flash%20High-B23CF0?style=flat-square" alt="Gemini 3.8 Flash High"/>
-  <img src="https://img.shields.io/badge/Tokens-~14.5M%20Processed-B23CF0?style=flat-square" alt="Tokens Processed"/>
+  <img src="https://img.shields.io/badge/Tokens-~15.2M%20Processed-B23CF0?style=flat-square" alt="Tokens Processed"/>
   <img src="https://img.shields.io/badge/Orchestrated%20by-danedsant-B23CF0?style=flat-square" alt="Author"/>
   <img src="https://img.shields.io/badge/Engineering-Antigravity%20%26%20OpenCode-B23CF0?style=flat-square" alt="Platform"/>
 </p>
@@ -32,23 +32,26 @@
 
 ---
 
-## ✨ Características Principales
+## ✨ Características Principales (v1.1)
 
 ### 🚀 Renderizado a 144 Hz en DirectX 12
 - Pipeline de formas de onda acelerado por hardware con shaders HLSL (`waveform.vso` / `waveform.pso`).
-- Pirámides multinivel con dos carriles sincronizados por deck: **Overview** (visión global de la pista) y **Detalle dinámico** (ventana deslizante de ±6 s a 144 Hz sostenidos).
+- **Pirámides multinivel de 12 niveles**: Soporte extendido para sets y podcasts masivos (60 a 120+ minutos) con decimación adaptativa sin ningún truncamiento.
+- **Coloración espectral tri-banda DJ**: Distribución dinámica de energía en Graves (`Low` <250 Hz), Medios (`Mid` 250 Hz - 4 kHz) y Altos (`Hi` >4 kHz) con doble capa en la vista Overview.
 - Indicadores en tiempo real de beat grid, marcadores de loop y hot cues adaptativos.
 - Splash Screen cinemático de bienvenida con desvanecimiento suave (*fade-out*).
 
 ### ⚡ Motor de Audio de Latencia Ultra-Baja (<5 ms)
 - Salida mediante **WASAPI Exclusivo**, **WASAPI Compartido de baja latencia (`IAudioClient3`)** y **ASIO** a través de módulos headless de JUCE.
 - **Garantías de tiempo real estrictas**: Cero llamadas a `malloc`/`new` en el callback de audio, comunicación inter-hilos sin bloqueos mediante anillos **SPSC lock-free**.
+- **Saturador analógico suave en el Master**: Curva $C^1$ hiperbólica antes del limitador lookahead que previene distorsiones ásperas al apilar drops.
 - Algoritmo elástico **Master Tempo (Pitch Lock)** y Key Shifting para mantener la afinación musical independiente de la velocidad.
 
-### 🎛️ Consola DJ Simétrica
+### 🎛️ Consola DJ Simétrica & Scratch
 - **Estructura ergonómica**: `[ Deck A | Mixer Central | Deck B ]` en la sección superior y paneles de biblioteca independientes debajo de cada deck.
-- **Mixer de precisión**: Crossfader simétrico con curvas DJ, faders de ganancia individual, ecualización tribanda (Low, Mid, High) y filtros bipolares Hi-Pass / Low-Pass con barrido de resonancia.
-- **Hot Cues y Loops elásticos**: 3 ranuras de Hot Cues instantáneas por deck y escalera de loops de 9 longitudes (de 1/8 a 32 beats).
+- **Mixer de precisión**: Selector de 4 curvas de crossfader (Linear, Sharp, Constant Power y **Scratch** con corte al 3%), faders de ganancia individual, ecualización tribanda (Low, Mid, High) y filtros bipolares Hi-Pass / Low-Pass.
+- **Cuantización Snap-to-Grid a 1/8 de Beat**: Alineación instantánea a la cuadrícula musical en Play, Hot Cues y sincronización SYNC de fase absoluta.
+- **Detección de BPM EDM Multi-género**: Pre-filtro pasa-bajos de onsets a 180 Hz, compresión logarítmica y corrección half-time para Trap, Dubstep y Drum & Bass.
 - **Consistencia visual glassmorphism**: Paleta adaptativa en Electric Purple, Neon Cyan y acentos configurables.
 
 ### 🌐 Streaming Directo: YouTube & SoundCloud Integrados
@@ -73,7 +76,7 @@
 El instalador autónomo empaqueta todos los binarios, shaders, fuentes y las herramientas de streaming (`yt-dlp` y `ffmpeg`) para funcionar de inmediato en cualquier PC sin dependencias previas:
 
 1. Dirígete a la sección de **[Releases](https://github.com/danedsant/Melodeus/releases)**.
-2. Descarga el ejecutable: **`Melodeus_Setup_v1.0.exe`** (~63.5 MB).
+2. Descarga el ejecutable: **`Melodeus_Setup_v1.1.exe`** (~66.7 MB).
 3. Ejecuta el asistente de instalación:
    - Selecciona el idioma (Español, Inglés o Portugués).
    - Elige si deseas crear un acceso directo en el escritorio.

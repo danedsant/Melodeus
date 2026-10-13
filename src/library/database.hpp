@@ -1,5 +1,6 @@
 #pragma once
 
+#include "analysis/beatgrid.hpp"
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -64,6 +65,9 @@ public:
     /// format_version.
     bool insert_analysis_blob(std::int64_t track_id, int kind, const std::uint8_t audio_sha1[20],
                               const void* data, std::size_t size);
+
+    /// Recupera el BeatGrid del blob de análisis (kind=0). Devuelve false si no existe.
+    bool get_beatgrid(std::int64_t track_id, analysis::BeatGrid* out) const;
 
     /// Búsqueda FTS5 (tokens AND). source_type < 0 busca en todas las fuentes (0=local, 1=youtube, 2=soundcloud).
     std::vector<TrackMeta> search(const char* query, int limit = 200, int source_type = -1) const;
