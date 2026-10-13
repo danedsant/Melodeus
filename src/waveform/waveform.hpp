@@ -15,6 +15,7 @@ struct WaveBucket {
     float lo = 0.0f;
     float mid = 0.0f;
     float hi = 0.0f;
+    float rms = 0.0f;
 };
 
 /// Pirámide multiresolución: nivel 0 = buckets de kBaseBucketSamples muestras;
@@ -106,6 +107,7 @@ struct WaveInstance {
 std::size_t fill_wave_instances(const WaveformPyramid& pyramid, const VisibleRange& range,
                                 double first_sample, double samples_visible, float ndc_x0,
                                 float ndc_x1, float ndc_y_center, float ndc_y_half,
-                                float amplitude_scale, WaveInstance* out, std::size_t max_out);
+                                float amplitude_scale, WaveInstance* out, std::size_t max_out,
+                                const float* base_rgb = nullptr, bool is_overview = false);
 
 } // namespace melodeus::wave

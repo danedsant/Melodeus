@@ -1,28 +1,43 @@
-# Build
+# Compilación y artefactos de build
 build/
 out/
+bin/
 cmake-build-*/
 CMakeUserPresets.json
 
-# Dependencies (pobladas por scripts/fetch_deps.ps1; no se versionan)
+# Salida del instalador (se publica como activo binario en GitHub Releases)
+installer/Output/
+
+# Dependencias externas (pobladas limpiamente por scripts/fetch_deps.ps1)
 external/*
 !external/.gitkeep
 
-# IDE
+# IDEs y herramientas de desarrollo
 .vs/
 .vscode/
 .idea/
 *.user
 *.suo
+*.sln.docstates
 
-# Artefacts
+# Binarios y artefactos intermedios
 *.obj
 *.pdb
 *.ilk
 *.exe
 *.dll
 *.lib
+*.exp
 *.log
 
-# Artefactos de runtime (ImGui)
+# Bases de datos SQLite locales y cachés de runtime
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+downloads/
+cache/
+
+# Archivos de configuración local y estado de interfaz
 imgui.ini
+settings.json

@@ -41,13 +41,27 @@ struct AudioSpikeView {
     const float* tap = nullptr;
     int tap_len = 0;
     unsigned tap_seq = 0;
+    /// Contador de cargas aplicadas por deck (incrementado en el callback
+    /// cuando se hace el swap; útil para el indicador de staging de la UI).
+    int load_gen[2] = {0, 0};
+    double key_shift_a = 0.0;
+    double key_shift_b = 0.0;
+    bool master_tempo_a = false;
+    bool master_tempo_b = false;
+    bool loading_a = false;
+    bool loading_b = false;
 };
 
 bool audio_spike_view(AudioSpikeView* out);
 
-/// Carga un archivo WAV/FLAC/MP3 en el deck (0=A, 1=B). El decode y la
-/// pirámide se hacen en el hilo llamador; el swap es en el hilo de audio
-/// al inicio del siguiente callback. false si ya hay una carga pendiente.
+/// Carga asíncrona en segundo plano (decode + pirámide en worker, swap O(1)
+/// en el hilo de audio sin bloquear la UI ni el motor).
+bool audio_spike_load_async(int deck, const char* path, const char* title);
+
+/// Indica si hay una carga en progreso en segundo plano para el deck especificado.
+bool audio_spike_is_loading(int deck);
+
+/// Carga síncrona tradicional (usada en selftests o cuando se requiere espera).
 bool audio_spike_load(int deck, const char* path, const char* title);
 
 /// Igual que audio_spike_load pero con samples ya decodificados (camino de
@@ -64,6 +78,13 @@ void audio_spike_set_mixer(float crossfader, float gain_a, float gain_b, float m
 /// Pitch del deck en % (aplicado en el hilo de audio).
 void audio_spike_set_pitch(int deck, float pct);
 
+/// Key shift del deck en semitonos [-12..+12] (modifica el tono sin alterar BPM).
+void audio_spike_set_key_shift(int deck, float semitones);
+
+/// Master Tempo (Key Lock): cuando está activo, el pitch slider varía el BPM
+/// pero mantiene la afinación fija.
+void audio_spike_set_master_tempo(int deck, bool on);
+
 /// Salta a `seconds` (CUE = 0.0). Aplicado en el hilo de audio.
 void audio_spike_seek(int deck, double seconds);
 
@@ -72,6 +93,10 @@ void audio_spike_set_eq(int deck, float low_db, float mid_db, float high_db);
 
 /// Filtro DJ del canal: -1 = LP full, 0 = bypass, +1 = HP full.
 void audio_spike_set_filter(int deck, float pos);
+
+/// Loop del deck: al alcanzar start+len vuelve a start. len <= 0 desactiva.
+/// Aplicado en el hilo de audio al inicio del callback.
+void audio_spike_set_loop(int deck, double start_sec, double len_sec);
 
 /// Último error de carga (decode/staging); vacío si la última fue OK.
 /// Cadena estable hasta la siguiente llamada a load.

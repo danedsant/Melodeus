@@ -3,6 +3,7 @@
 add_library(melodeus_streaming STATIC
     disk_cache.cpp
     stream_loader.cpp
+    stream_search.cpp
     ytdlp_source.cpp
 )
 target_include_directories(melodeus_streaming PUBLIC ${CMAKE_SOURCE_DIR}/src)

@@ -5,6 +5,7 @@
 #include "streaming/i_stream_source.hpp"
 #include "streaming/jitter_buffer.hpp"
 #include "streaming/stream_loader.hpp"
+#include "streaming/stream_search.hpp"
 #include "streaming/ytdlp_source.hpp"
 
 #include <atomic>
@@ -216,4 +217,36 @@ TEST_CASE("stream_loader: fichero local + hit de caché") {
 
     std::error_code ec;
     fs::remove(wav, ec);
+}
+
+TEST_CASE("Streaming: parse_yt_json_line (YouTube & SoundCloud JSON Lines)") {
+    // YouTube sample
+    const std::string yt_line =
+        R"({"_type": "url", "id": "2kpAzC2Mja8", "url": "https://www.youtube.com/watch?v=2kpAzC2Mja8", "title": "Martin Garrix - Animals", "duration": 202.5, "uploader": "Spinnin Records"})";
+
+    melodeus::streaming::OnlineTrackResult res_yt;
+    REQUIRE(melodeus::streaming::parse_yt_json_line(yt_line, &res_yt));
+    CHECK(res_yt.id == "2kpAzC2Mja8");
+    CHECK(res_yt.title == "Martin Garrix - Animals");
+    CHECK(res_yt.uploader == "Spinnin Records");
+    CHECK(res_yt.duration == doctest::Approx(202.5));
+    CHECK(res_yt.url == "https://www.youtube.com/watch?v=2kpAzC2Mja8");
+    CHECK_FALSE(res_yt.already_downloaded);
+
+    // SoundCloud sample
+    const std::string sc_line =
+        R"({"uploader": "Skrillex", "title": "First Of The Year", "duration": 261.5, "webpage_url": "https://soundcloud.com/skrillex/first-of-the-year", "id": "21792829"})";
+
+    melodeus::streaming::OnlineTrackResult res_sc;
+    REQUIRE(melodeus::streaming::parse_yt_json_line(sc_line, &res_sc));
+    CHECK(res_sc.id == "21792829");
+    CHECK(res_sc.title == "First Of The Year");
+    CHECK(res_sc.uploader == "Skrillex");
+    CHECK(res_sc.duration == doctest::Approx(261.5));
+    CHECK(res_sc.url == "https://soundcloud.com/skrillex/first-of-the-year");
+
+    // Invalid line
+    melodeus::streaming::OnlineTrackResult bad;
+    CHECK_FALSE(melodeus::streaming::parse_yt_json_line("{}", &bad));
+    CHECK_FALSE(melodeus::streaming::parse_yt_json_line("", &bad));
 }

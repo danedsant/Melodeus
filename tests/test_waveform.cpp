@@ -45,14 +45,17 @@ TEST_CASE("pirámide: conteos, niveles y fusión") {
             float lo = a.lo;
             float mn = a.min;
             float mx = a.max;
+            float rms = a.rms;
             if (i * 2 + 1 < pyr.bucket_count(lvl - 1)) {
                 lo = std::max(lo, prev[i * 2 + 1].lo);
                 mn = std::min(mn, prev[i * 2 + 1].min);
                 mx = std::max(mx, prev[i * 2 + 1].max);
+                rms = std::sqrt(0.5f * (a.rms * a.rms + prev[i * 2 + 1].rms * prev[i * 2 + 1].rms));
             }
             CHECK(p.min == mn);
             CHECK(p.max == mx);
             CHECK(p.lo == lo);
+            CHECK(p.rms == doctest::Approx(rms));
         }
     }
 }
@@ -114,11 +117,35 @@ TEST_CASE("fill_wave_instances mapea muestras a NDC") {
         // Sena de amplitud 1: |y| ≤ half en NDC.
         CHECK(std::fabs(inst[i].y0) <= 1.05f);
         CHECK(std::fabs(inst[i].y1) <= 1.05f);
-        // Grave puro: rojo domina sobre azul.
-        CHECK(inst[i].r >= inst[i].b);
+        // Degradado navy→purple: componentes dentro de [0,1] y azul domina
+        // en el tramo navy (amplitud baja → kPeakNavy con b > r).
+        CHECK(inst[i].r >= 0.0f);
+        CHECK(inst[i].g >= 0.0f);
+        CHECK(inst[i].b >= 0.0f);
+        CHECK(inst[i].r <= 1.0f);
+        CHECK(inst[i].g <= 1.0f);
+        CHECK(inst[i].b <= 1.0f);
     }
     // Primera instancia empieza en el borde izquierdo.
     CHECK(inst[0].x0 == doctest::Approx(-1.0f).epsilon(0.01));
+}
+
+TEST_CASE("fill_wave_instances genera doble capa en modo overview") {
+    const auto sig = make_sine(440.0, 1.0, 48000.0);
+    melodeus::wave::WaveformPyramid pyr;
+    pyr.build(sig.data(), static_cast<std::int64_t>(sig.size()), 1, 48000.0);
+    const auto range = melodeus::wave::visible_range(pyr, 24000.0, 48000.0, 100.0);
+    std::vector<melodeus::wave::WaveInstance> inst(8192);
+    const std::size_t n = melodeus::wave::fill_wave_instances(
+        pyr, range, 0.0, 48000.0, -1.0f, 1.0f, 0.0f, 1.0f, 1.0f, inst.data(), inst.size(),
+        nullptr, true);
+    REQUIRE(n > 0);
+    // En modo overview se genera la línea central más quads de envolvente y núcleo
+    for (std::size_t i = 0; i < n; ++i) {
+        CHECK(inst[i].x0 <= inst[i].x1);
+        CHECK(std::fabs(inst[i].y0) <= 1.05f);
+        CHECK(std::fabs(inst[i].y1) <= 1.05f);
+    }
 }
 
 TEST_CASE("fft: pico en el bin correcto") {

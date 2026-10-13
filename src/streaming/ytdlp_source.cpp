@@ -211,7 +211,9 @@ bool run_capture(const std::string& cmd, DWORD timeout_ms, std::string* out, DWO
 }
 
 bool is_http_url(const std::string& url) {
-    return url.rfind("http://", 0) == 0 || url.rfind("https://", 0) == 0;
+    return url.rfind("http://", 0) == 0 || url.rfind("https://", 0) == 0 ||
+           url.rfind("ytsearch:", 0) == 0 || url.rfind("ytsearch1:", 0) == 0 ||
+           url.rfind("scsearch:", 0) == 0 || url.rfind("scsearch1:", 0) == 0;
 }
 
 std::string strip_file_scheme(const std::string& url) {
@@ -221,11 +223,48 @@ std::string strip_file_scheme(const std::string& url) {
     return url;
 }
 
+bool is_youtube_url(const std::string& url) {
+    return url.find("youtube.com") != std::string::npos ||
+           url.find("youtu.be") != std::string::npos;
+}
+
+std::filesystem::path resolve_tool_path(const std::filesystem::path& p) {
+    if (p.empty()) {
+        return p;
+    }
+    std::error_code ec;
+    if (p.is_absolute() && std::filesystem::exists(p, ec)) {
+        return p;
+    }
+    auto cur_path = std::filesystem::current_path(ec) / p;
+    if (!ec && std::filesystem::exists(cur_path, ec)) {
+        return std::filesystem::absolute(cur_path, ec);
+    }
+    wchar_t buf[MAX_PATH]{};
+    const DWORD len = ::GetModuleFileNameW(nullptr, buf, MAX_PATH);
+    if (len > 0 && len < MAX_PATH) {
+        std::filesystem::path cur = std::filesystem::path(buf).parent_path();
+        for (int i = 0; i < 4; ++i) {
+            auto cand = cur / p;
+            if (std::filesystem::exists(cand, ec)) {
+                return std::filesystem::absolute(cand, ec);
+            }
+            if (!cur.has_parent_path() || cur == cur.parent_path()) {
+                break;
+            }
+            cur = cur.parent_path();
+        }
+    }
+    return p;
+}
+
 } // namespace
 
 YtDlpSource::YtDlpSource(ToolPaths tools, int prefill_frames)
     : tools_(std::move(tools)), jb_(prefill_frames, kChannels),
-      title_(tools_.ytdlp.empty() ? std::string() : std::string()), error_() {
+      title_(), error_() {
+    tools_.ytdlp = resolve_tool_path(tools_.ytdlp);
+    tools_.ffmpeg = resolve_tool_path(tools_.ffmpeg);
     HANDLE job = ::CreateJobObjectW(nullptr, nullptr);
     if (job != nullptr) {
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION info{};
@@ -289,8 +328,12 @@ bool YtDlpSource::query_title(const std::string& url, std::string* out, int time
     if (tools_.ytdlp.empty() || out == nullptr) {
         return false;
     }
-    const std::string cmd =
-        quote(tools_.ytdlp) + " --no-playlist --skip-download --print title " + "\"" + url + "\"";
+    std::string cmd =
+        quote(tools_.ytdlp) + " --no-playlist --no-warnings --skip-download ";
+    if (is_youtube_url(url)) {
+        cmd += "--extractor-args \"youtube:player_client=android,web\" ";
+    }
+    cmd += "--print title " + quote(url);
     DWORD code = 99;
     std::string title;
     if (!run_capture(cmd, static_cast<DWORD>(timeout_ms), &title, &code) || code != 0 ||
@@ -347,7 +390,7 @@ bool YtDlpSource::pull_all(std::vector<float>* out, int timeout_ms) {
 
 std::int64_t YtDlpSource::run_session(const std::string& url, bool http, bool* died_early) {
     *died_early = false;
-    const std::string url_q = "\"" + url + "\"";
+    const std::string url_q = quote(url);
 
     Pipe p12;
     Pipe p2out;
@@ -372,8 +415,12 @@ std::int64_t YtDlpSource::run_session(const std::string& url, bool http, bool* d
         }
         const std::string cmd2 =
             ffmpeg_base + "-i pipe:0 -f f32le -acodec pcm_f32le -ac 2 -ar 48000 pipe:1";
-        const std::string cmd1 =
-            quote(tools_.ytdlp) + " -f bestaudio -o - --no-part --no-playlist --quiet " + url_q;
+        std::string ytdlp_args =
+            quote(tools_.ytdlp) + " --no-warnings -f \"bestaudio/best\" -o - --no-part --no-playlist --quiet ";
+        if (is_youtube_url(url)) {
+            ytdlp_args += "--extractor-args \"youtube:player_client=android,web\" ";
+        }
+        const std::string cmd1 = ytdlp_args + url_q;
         wcmd_ffmpeg = widen(cmd2);
         wcmd_ytdlp = widen(cmd1);
         c2 = spawn(wcmd_ffmpeg, p12.rd, p2out.wr, static_cast<HANDLE>(job_));
@@ -474,26 +521,37 @@ void YtDlpSource::worker(const std::string url) {
     const bool http = is_http_url(url);
 
     if (http) {
-        // Título y duración (best effort; la URL sirve de fallback).
-        std::string title;
-        if (query_title(url, &title, 30000)) {
-            std::lock_guard<std::mutex> lock(text_mutex_);
-            title_ = title;
+        // Título y duración en una sola consulta ágil (10s max para no retrasar la descarga).
+        std::string meta_cmd = quote(tools_.ytdlp) +
+                               " --no-playlist --no-warnings --skip-download ";
+        if (is_youtube_url(url)) {
+            meta_cmd += "--extractor-args \"youtube:player_client=android,web\" ";
+        }
+        meta_cmd += "--print \"%(title)s\t%(duration)s\" " + quote(url);
+
+        std::string meta;
+        DWORD code = 99;
+        if (run_capture(meta_cmd, 10000, &meta, &code) && code == 0 && !meta.empty()) {
+            const auto tab = meta.find('\t');
+            std::string t = (tab != std::string::npos) ? meta.substr(0, tab) : meta;
+            std::string dur = (tab != std::string::npos) ? meta.substr(tab + 1) : "";
+            if (!t.empty() && t != "NA") {
+                std::lock_guard<std::mutex> lock(text_mutex_);
+                title_ = t;
+            } else {
+                std::lock_guard<std::mutex> lock(text_mutex_);
+                title_ = url;
+            }
+            if (!dur.empty() && dur != "NA") {
+                const double seconds = std::strtod(dur.c_str(), nullptr);
+                if (seconds > 1.0) {
+                    duration_frames_.store(static_cast<std::int64_t>(seconds * kSampleRate),
+                                           std::memory_order_relaxed);
+                }
+            }
         } else {
             std::lock_guard<std::mutex> lock(text_mutex_);
             title_ = url;
-        }
-        std::string dur;
-        const std::string cmd = quote(tools_.ytdlp) +
-                                " --no-playlist --skip-download --print duration " + "\"" + url +
-                                "\"";
-        DWORD code = 99;
-        if (run_capture(cmd, 30000, &dur, &code) && code == 0 && !dur.empty()) {
-            const double seconds = std::strtod(dur.c_str(), nullptr);
-            if (seconds > 1.0) {
-                duration_frames_.store(static_cast<std::int64_t>(seconds * kSampleRate),
-                                       std::memory_order_relaxed);
-            }
         }
     } else {
         std::lock_guard<std::mutex> lock(text_mutex_);

@@ -198,7 +198,7 @@ void WaveformPass::draw_lane(ID3D12GraphicsCommandList* cmd, const wave::WaveIns
                          static_cast<UINT64>(cursor_) * sizeof(wave::WaveInstance);
     vbv.SizeInBytes = static_cast<UINT>(count * sizeof(wave::WaveInstance));
     vbv.StrideInBytes = sizeof(wave::WaveInstance);
-    cmd->IASetVertexBuffers(1, 1, &vbv);
+    cmd->IASetVertexBuffers(0, 1, &vbv); // input layout: slot 0 (PER_INSTANCE_DATA)
     cmd->DrawInstanced(6, static_cast<UINT>(count), 0, 0);
     cursor_ += count;
 }

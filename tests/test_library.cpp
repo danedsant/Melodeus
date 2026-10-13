@@ -248,3 +248,131 @@ TEST_CASE("Importer: scan_folder encuentra wav/flac/mp3") {
     CHECK(melodeus::library::scan_folder(dir / "missing").empty());
     fs::remove_all(dir, ec);
 }
+
+TEST_CASE("Database: delete_track elimina metadatos, blobs y limpia FTS5") {
+    TempDb tmp("delete_track");
+    melodeus::library::Database db;
+    REQUIRE(db.open(tmp.path.string().c_str()));
+
+    melodeus::library::TrackMeta m;
+    m.uri = "file://test_delete.wav";
+    m.title = "Delete Me Now";
+    m.artist = "Temporary Artist";
+    m.album = "Single";
+    m.bpm = 124.0;
+    const std::int64_t tid = db.insert_track(m);
+    REQUIRE(tid > 0);
+    CHECK(db.count() == 1);
+
+    const std::uint8_t sha1[20] = {1, 2, 3, 4, 5};
+    const float dummy_data[4] = {0.1f, 0.2f, 0.3f, 0.4f};
+    REQUIRE(db.insert_analysis_blob(tid, 0, sha1, dummy_data, sizeof(dummy_data)));
+    CHECK(db.blob_count() == 1);
+
+    // Debe encontrarse en FTS5
+    auto found = db.search("Delete");
+    REQUIRE(found.size() == 1);
+    CHECK(found[0].track_id == tid);
+
+    // Eliminar la pista
+    REQUIRE(db.delete_track(tid));
+
+    // Verificar que desapareció de tracks, de blobs y de FTS5
+    CHECK(db.count() == 0);
+    CHECK(db.blob_count() == 0);
+    found = db.search("Delete");
+    CHECK(found.empty());
+
+    // delete_track con ID inexistente o inválido
+    CHECK_FALSE(db.delete_track(-1));
+}
+
+TEST_CASE("Database: filtrado por source_type (Local, YouTube, SoundCloud)") {
+    TempDb tmp("source_type");
+    melodeus::library::Database db;
+    REQUIRE(db.open(tmp.path.string().c_str()));
+
+    melodeus::library::TrackMeta t_local;
+    t_local.uri = "file://local.wav";
+    t_local.title = "Local Electro Track";
+    t_local.source_type = 0;
+    REQUIRE(db.insert_track(t_local) > 0);
+
+    melodeus::library::TrackMeta t_yt;
+    t_yt.uri = "file://yt.wav";
+    t_yt.title = "YouTube Festival Mix";
+    t_yt.source_type = 1;
+    REQUIRE(db.insert_track(t_yt) > 0);
+
+    melodeus::library::TrackMeta t_sc;
+    t_sc.uri = "file://sc.wav";
+    t_sc.title = "SoundCloud Remix";
+    t_sc.source_type = 2;
+    REQUIRE(db.insert_track(t_sc) > 0);
+
+    CHECK(db.count() == 3);
+    CHECK(db.count_source(0) == 1);
+    CHECK(db.count_source(1) == 1);
+    CHECK(db.count_source(2) == 1);
+    CHECK(db.count_source(3) == 0);
+
+    // Búsqueda global (source_type = -1)
+    CHECK(db.search("", 100, -1).size() == 3);
+
+    // Búsqueda filtrada por fuente sin query
+    CHECK(db.search("", 100, 0).size() == 1);
+    CHECK(db.search("", 100, 0)[0].title == "Local Electro Track");
+    CHECK(db.search("", 100, 1).size() == 1);
+    CHECK(db.search("", 100, 1)[0].title == "YouTube Festival Mix");
+    CHECK(db.search("", 100, 2).size() == 1);
+    CHECK(db.search("", 100, 2)[0].title == "SoundCloud Remix");
+
+    // Búsqueda filtrada por fuente con FTS query
+    CHECK(db.search("Electro", 100, 0).size() == 1);
+    CHECK(db.search("Electro", 100, 1).empty());
+    CHECK(db.search("Festival", 100, 1).size() == 1);
+    CHECK(db.search("Festival", 100, 2).empty());
+}
+
+TEST_CASE("Database: corrección de source_type para archivos fuera de downloads") {
+    TempDb tmp("sanitize_source");
+    melodeus::library::Database db;
+    REQUIRE(db.open(tmp.path.string().c_str()));
+
+    melodeus::library::TrackMeta t_local_down;
+    t_local_down.uri = "C:/Users/dj/Downloads/MySong.mp3";
+    t_local_down.title = "User Download Song";
+    t_local_down.source_type = 1; // erróneamente clasificado como youtube
+    REQUIRE(db.insert_track(t_local_down) > 0);
+
+    melodeus::library::TrackMeta t_real_yt;
+    t_real_yt.uri = "C:/Users/dj/AppData/Local/Temp/melodeus_f3_demo/downloads/Stream_123.wav";
+    t_real_yt.title = "Real Stream";
+    t_real_yt.source_type = 1;
+    REQUIRE(db.insert_track(t_real_yt) > 0);
+
+    std::filesystem::path app_dl = "C:/Users/dj/AppData/Local/Temp/melodeus_f3_demo/downloads";
+    std::error_code ec;
+    auto all = db.search("", 100, -1);
+    for (const auto& tr : all) {
+        if (tr.source_type == 1 || tr.source_type == 2) {
+            std::filesystem::path p(tr.uri);
+            bool inside_dl = false;
+            auto rel = std::filesystem::relative(p, app_dl, ec);
+            if (!ec && !rel.empty() && rel.string().find("..") == std::string::npos) {
+                inside_dl = true;
+            }
+            if (!inside_dl) {
+                std::string sql = "UPDATE tracks SET source_type = 0 WHERE track_id = " +
+                                  std::to_string(tr.track_id) + ";";
+                db.exec_sql(sql.c_str());
+            }
+        }
+    }
+
+    CHECK(db.count_source(0) == 1);
+    CHECK(db.count_source(1) == 1);
+    CHECK(db.search("", 100, 0)[0].title == "User Download Song");
+    CHECK(db.search("", 100, 1)[0].title == "Real Stream");
+}
+

@@ -6,6 +6,7 @@
 
 #include "imgui.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 
@@ -23,19 +24,63 @@ inline constexpr ImU32 kText = IM_COL32(228, 232, 240, 255);
 inline constexpr ImU32 kTextDim = IM_COL32(140, 148, 162, 255);
 inline constexpr ImU32 kTextHot = IM_COL32(245, 248, 252, 255);
 
-inline constexpr ImU32 kAccentA = IM_COL32(86, 148, 255, 255); // deck A
-inline constexpr ImU32 kAccentB = IM_COL32(255, 150, 86, 255); // deck B
-inline constexpr ImU32 kAccentADim = IM_COL32(40, 74, 130, 255);
-inline constexpr ImU32 kAccentBDim = IM_COL32(130, 74, 40, 255);
+inline constexpr ImU32 kAccentA = IM_COL32(178, 60, 240, 255);  // deck A (electric purple)
+inline constexpr ImU32 kAccentB = IM_COL32(236, 130, 250, 255); // deck B (hot purple)
+inline constexpr ImU32 kAccentADim = IM_COL32(90, 30, 120, 255);
+inline constexpr ImU32 kAccentBDim = IM_COL32(130, 65, 140, 255);
 inline constexpr ImU32 kSuccess = IM_COL32(72, 200, 120, 255);
 inline constexpr ImU32 kDanger = IM_COL32(240, 90, 80, 255);
 inline constexpr ImU32 kWarn = IM_COL32(240, 200, 90, 255);
 
-// Barra de peak del master (top-right): degradado azul marino -> purple.
+// Colores de acento dinámicos configurables por el usuario.
+inline ImU32 g_accent_a = kAccentA;
+inline ImU32 g_accent_b = kAccentB;
+inline ImU32 g_accent_a_dim = kAccentADim;
+inline ImU32 g_accent_b_dim = kAccentBDim;
+
+// Barra de peak del master (top-right): valores por defecto.
 inline constexpr ImU32 kPeakNavy = IM_COL32(18, 32, 92, 255);
 inline constexpr ImU32 kPeakPurple = IM_COL32(178, 60, 240, 255);
 inline constexpr ImU32 kPeakHot = IM_COL32(236, 130, 250, 255); // >0 dBFS clip
 inline constexpr ImU32 kPeakTrack = IM_COL32(40, 46, 62, 200);  // carril vacío
+
+// Barra de peak del master (top-right): degradado adaptativo dinámico.
+inline ImU32 g_peak_low = kPeakNavy;
+inline ImU32 g_peak_high = kPeakPurple;
+inline ImU32 g_peak_hot = kPeakHot;
+
+inline void apply();
+
+inline void set_deck_colors(const float a[3], const float b[3]) {
+    const int ar = static_cast<int>(std::clamp(a[0], 0.0f, 1.0f) * 255.0f);
+    const int ag = static_cast<int>(std::clamp(a[1], 0.0f, 1.0f) * 255.0f);
+    const int ab = static_cast<int>(std::clamp(a[2], 0.0f, 1.0f) * 255.0f);
+    g_accent_a = IM_COL32(ar, ag, ab, 255);
+    g_accent_a_dim = IM_COL32(ar / 2, ag / 2, ab / 2, 255);
+
+    const int br = static_cast<int>(std::clamp(b[0], 0.0f, 1.0f) * 255.0f);
+    const int bg = static_cast<int>(std::clamp(b[1], 0.0f, 1.0f) * 255.0f);
+    const int bb = static_cast<int>(std::clamp(b[2], 0.0f, 1.0f) * 255.0f);
+    g_accent_b = IM_COL32(br, bg, bb, 255);
+    g_accent_b_dim = IM_COL32(br / 2, bg / 2, bb / 2, 255);
+
+    // Degradado del medidor derivado armónicamente
+    g_peak_low = IM_COL32(ar / 6, ag / 6, std::clamp((ab / 3) + 25, 0, 255), 255);
+    g_peak_high = g_accent_a;
+    g_peak_hot = g_accent_b;
+
+    if (ImGui::GetCurrentContext() != nullptr) {
+        apply();
+    }
+}
+
+inline ImU32 accent_a() { return g_accent_a; }
+inline ImU32 accent_b() { return g_accent_b; }
+inline ImU32 accent_a_dim() { return g_accent_a_dim; }
+inline ImU32 accent_b_dim() { return g_accent_b_dim; }
+inline ImU32 peak_low() { return g_peak_low; }
+inline ImU32 peak_high() { return g_peak_high; }
+inline ImU32 peak_hot() { return g_peak_hot; }
 
 inline constexpr float kRadiusPanel = 12.0f;
 inline constexpr float kRadiusControl = 8.0f;
@@ -100,16 +145,18 @@ inline void apply() {
     const ImVec4 btn = ImGui::ColorConvertU32ToFloat4(IM_COL32(62, 70, 90, 100));
     const ImVec4 btn_hov = ImGui::ColorConvertU32ToFloat4(IM_COL32(84, 96, 122, 160));
     const ImVec4 btn_act = ImGui::ColorConvertU32ToFloat4(IM_COL32(100, 114, 144, 200));
-    const ImVec4 hdr = ImGui::ColorConvertU32ToFloat4(IM_COL32(86, 148, 255, 46));
-    const ImVec4 hdr_sel = ImGui::ColorConvertU32ToFloat4(IM_COL32(86, 148, 255, 90));
+    const ImVec4 acc_a = ImGui::ColorConvertU32ToFloat4(g_accent_a);
+    const ImVec4 acc_b = ImGui::ColorConvertU32ToFloat4(g_accent_b);
+    const ImVec4 hdr = ImVec4(acc_a.x, acc_a.y, acc_a.z, 0.22f);
+    const ImVec4 hdr_sel = ImVec4(acc_a.x, acc_a.y, acc_a.z, 0.42f);
     const ImVec4 grab = ImGui::ColorConvertU32ToFloat4(IM_COL32(190, 200, 220, 255));
-    const ImVec4 grab_hov = ImGui::ColorConvertU32ToFloat4(IM_COL32(120, 170, 255, 255));
+    const ImVec4 grab_hov = acc_a;
 
     s.Colors[ImGuiCol_Text] = t;
     s.Colors[ImGuiCol_TextDisabled] = dim;
     s.Colors[ImGuiCol_WindowBg] = ImVec4(0, 0, 0, 0); // el fondo lo da el clear
     s.Colors[ImGuiCol_ChildBg] = ImVec4(0, 0, 0, 0);
-    s.Colors[ImGuiCol_PopupBg] = glass_strong;
+    s.Colors[ImGuiCol_PopupBg] = ImVec4(20.0f / 255.0f, 24.0f / 255.0f, 34.0f / 255.0f, 0.96f);
     s.Colors[ImGuiCol_Border] = border;
     s.Colors[ImGuiCol_FrameBg] = frame;
     s.Colors[ImGuiCol_FrameBgHovered] = frame_hov;
@@ -120,7 +167,7 @@ inline void apply() {
     s.Colors[ImGuiCol_Header] = hdr;
     s.Colors[ImGuiCol_HeaderHovered] = hdr_sel;
     s.Colors[ImGuiCol_HeaderActive] = hdr_sel;
-    s.Colors[ImGuiCol_CheckMark] = t;
+    s.Colors[ImGuiCol_CheckMark] = acc_a;
     s.Colors[ImGuiCol_SliderGrab] = grab;
     s.Colors[ImGuiCol_SliderGrabActive] = grab_hov;
     s.Colors[ImGuiCol_Separator] = border;
@@ -131,6 +178,11 @@ inline void apply() {
     s.Colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.35f, 0.38f, 0.46f, 0.60f);
     s.Colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.45f, 0.50f, 0.60f, 0.70f);
     s.Colors[ImGuiCol_ScrollbarGrabActive] = grab_hov;
+    s.Colors[ImGuiCol_Tab] = ImVec4(0.18f, 0.22f, 0.30f, 0.50f);
+    s.Colors[ImGuiCol_TabHovered] = ImVec4(acc_a.x, acc_a.y, acc_a.z, 0.40f);
+    s.Colors[ImGuiCol_TabActive] = ImVec4(acc_a.x, acc_a.y, acc_a.z, 0.65f);
+    s.Colors[ImGuiCol_TabUnfocused] = ImVec4(0.12f, 0.15f, 0.20f, 0.40f);
+    s.Colors[ImGuiCol_TabUnfocusedActive] = ImVec4(acc_a.x, acc_a.y, acc_a.z, 0.45f);
     s.Colors[ImGuiCol_TableRowBg] = ImVec4(0, 0, 0, 0);
     s.Colors[ImGuiCol_TableRowBgAlt] = ImVec4(1, 1, 1, 0.02f);
     s.Colors[ImGuiCol_TableHeaderBg] = ImGui::ColorConvertU32ToFloat4(IM_COL32(50, 58, 74, 110));

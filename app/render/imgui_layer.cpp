@@ -20,6 +20,7 @@ ID3D12DescriptorHeap* g_srv_heap = nullptr;
 
 ImFont* g_font_ui = nullptr;
 ImFont* g_font_title = nullptr;
+ImFont* g_font_bold = nullptr;
 ImFont* g_font_mono = nullptr;
 
 /// Directorio de fuentes: junto al exe (fonts/) o app/fonts (cwd=raíz).
@@ -36,16 +37,17 @@ std::filesystem::path font_dir() {
     return std::filesystem::path("app") / "fonts";
 }
 
-/// Carga los3 pesos + iconos; devuelve false si faltan TTF (fallback default).
+/// Carga los pesos de Inter + mono + iconos; false si faltan TTF (fallback).
 bool load_fonts(float /*dpi_scale*/) {
     ImGuiIO& io = ImGui::GetIO();
     const std::filesystem::path dir = font_dir();
-    const auto clash = dir / "ClashDisplay-Medium.ttf";
-    const auto clash_sb = dir / "ClashDisplay-Semibold.ttf";
+    const auto inter = dir / "Inter-Regular.ttf";
+    const auto inter_bold = dir / "Inter-Bold.ttf";
+    const auto inter_xbold = dir / "Inter-ExtraBold.ttf";
     const auto jb = dir / "JetBrainsMono-Regular.ttf";
     const auto ph = dir / "Phosphor.ttf";
     std::error_code ec;
-    if (!std::filesystem::exists(clash, ec)) {
+    if (!std::filesystem::exists(inter, ec)) {
         return false;
     }
 
@@ -69,7 +71,7 @@ bool load_fonts(float /*dpi_scale*/) {
     cfg.OversampleV = 1;
     cfg.PixelSnapH = false;
 
-    g_font_ui = io.Fonts->AddFontFromFileTTF(clash.string().c_str(), 16.0f, &cfg, ranges.Data);
+    g_font_ui = io.Fonts->AddFontFromFileTTF(inter.string().c_str(), 16.0f, &cfg, ranges.Data);
     if (g_font_ui == nullptr) {
         return false;
     }
@@ -80,8 +82,9 @@ bool load_fonts(float /*dpi_scale*/) {
     icon_cfg.OversampleH = 1;
     io.Fonts->AddFontFromFileTTF(ph.string().c_str(), 14.0f, &icon_cfg, ranges.Data);
 
+    g_font_bold = io.Fonts->AddFontFromFileTTF(inter_bold.string().c_str(), 16.0f, &cfg, ranges.Data);
     g_font_title =
-        io.Fonts->AddFontFromFileTTF(clash_sb.string().c_str(), 19.0f, &cfg, ranges.Data);
+        io.Fonts->AddFontFromFileTTF(inter_xbold.string().c_str(), 19.0f, &cfg, ranges.Data);
     g_font_mono = io.Fonts->AddFontFromFileTTF(jb.string().c_str(), 15.0f, &cfg, ranges.Data);
     return true;
 }
@@ -94,6 +97,10 @@ ImFont* imgui_font_ui() {
 
 ImFont* imgui_font_title() {
     return g_font_title;
+}
+
+ImFont* imgui_font_bold() {
+    return g_font_bold;
 }
 
 ImFont* imgui_font_mono() {
@@ -153,6 +160,7 @@ void imgui_layer_shutdown() {
     g_srv_heap = nullptr;
     g_font_ui = nullptr;
     g_font_title = nullptr;
+    g_font_bold = nullptr;
     g_font_mono = nullptr;
 }
 

@@ -57,15 +57,22 @@ struct EngineCallback final : juce::AudioIODeviceCallback {
     float tap_buf[2][kTapLen]{};
     int tap_fill = 0;
     int tap_cur = 0;
-    // Pirámides inmutables tras aboutToStart (leídas por el hilo de render).
+    // Pirámides de visualización (leídas ÚNICAMENTE por el hilo de render/UI).
     wave::WaveformPyramid pyr_a;
     wave::WaveformPyramid pyr_b;
-    // Carga con staging: el hilo llamador decodifica en stage[i] y publica
-    // pending_load; el hilo de audio hace el swap al inicio del callback.
-    audio::DecodedTrack stage[2];
-    char title_a[128] = "Sine 440 Hz";
-    char title_b[128] = "Sine 660 Hz";
-    std::atomic<int> pending_load{-1};
+    wave::WaveformPyramid staged_pyr[2];
+    std::atomic<bool> pyr_ready[2]{{false}, {false}};
+    char staged_title[2][128]{};
+    char title_a[128] = "";
+    char title_b[128] = "";
+
+    // Búferes dobles de pistas decodificadas: tracks[deck][slot].
+    // Garantiza que la pista previa NO se destruya mientras el hilo de audio reproduce.
+    audio::DecodedTrack tracks[2][2];
+    std::atomic<int> active_slot[2]{{0}, {0}};
+    std::atomic<int> pending_slot[2]{{-1}, {-1}};
+    std::atomic<bool> is_loading[2]{{false}, {false}};
+
     // Inputs de UI aplicados en el hilo de audio (smoothing del motor).
     std::atomic<float> ui_xf{0.0f};
     std::atomic<float> ui_gain_a{1.0f};
@@ -73,52 +80,87 @@ struct EngineCallback final : juce::AudioIODeviceCallback {
     std::atomic<float> ui_master{0.15f};
     std::atomic<int> ui_play_toggle{0}; ///< bit0=A bit1=B
     std::atomic<float> ui_pitch[2]{{0.0f}, {0.0f}};
+    std::atomic<float> ui_key_shift[2]{{0.0f}, {0.0f}};
+    std::atomic<bool> ui_master_tempo[2]{{false}, {false}};
     std::atomic<float> ui_seek_sec[2]{{-1.0f}, {-1.0f}}; ///< <0 = sin seek
     std::atomic<float> ui_eq[2][3]{};                    ///< [deck][0=lo,1=mid,2=hi] dB
     std::atomic<float> ui_filter[2]{{0.0f}, {0.0f}};     ///< -1 LP .. +1 HP
+    std::atomic<float> ui_loop_start[2]{{0.0f}, {0.0f}}; ///< loop start (s)
+    std::atomic<float> ui_loop_len[2]{{0.0f}, {0.0f}};   ///< loop len (s); <=0 = off
     char last_load_error[160]{};
     std::atomic<bool> running{false};
     // Solo en el hilo de audio:
     std::chrono::steady_clock::time_point last_cb_time{};
     bool have_last_cb = false;
     long long gap_threshold_ns = 0;
+    // Contador de cargas aplicadas por deck (incrementado al hacer el swap).
+    std::atomic<int> load_gen[2]{{0}, {0}};
+    bool was_playing_on_stop[2] = {false, false};
+    double pos_on_stop[2] = {0.0, 0.0};
 
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override {
         const double r = device->getCurrentSampleRate();
         const double rate = r > 0.0 ? r : 48000.0;
         max_block = static_cast<std::size_t>(std::max(device->getCurrentBufferSizeSamples(), 64));
+        std::printf("[audio-dbg] audioDeviceAboutToStart: dev='%s' rate=%.0f buffer=%d\n",
+                    device->getName().toRawUTF8(), rate, (int)max_block);
         const double period_s = static_cast<double>(device->getCurrentBufferSizeSamples()) / rate;
         // xrun = llegada de callback con gap > 2.5× periodo nominal (buffer
         // insuficiente: con MMCSS "Pro Audio" un gap así es underrun real).
         gap_threshold_ns = static_cast<long long>(2.5 * period_s * 1.0e9);
+
+        // Si se llama con el motor activo (reconfiguración en vivo), captura estado
+        if (engine != nullptr) {
+            was_playing_on_stop[0] = engine->deck_a().playing();
+            was_playing_on_stop[1] = engine->deck_b().playing();
+            pos_on_stop[0] = engine->deck_a().position_seconds();
+            pos_on_stop[1] = engine->deck_b().position_seconds();
+        }
+
         engine = std::make_unique<audio::Engine>(audio::EngineConfig{rate, max_block});
         scratch_l.assign(max_block, 0.0f);
         scratch_r.assign(max_block, 0.0f);
-        track_a = make_sine(440.0, kTrackSeconds, rate);
-        track_b = make_sine(660.0, kTrackSeconds, rate);
-        pyr_a.build(track_a.samples.data(), track_a.frames, track_a.channels, rate);
-        pyr_b.build(track_b.samples.data(), track_b.frames, track_b.channels, rate);
-        engine->deck_a().load({track_a.samples.data(), track_a.frames, track_a.channels, rate});
-        engine->deck_a().play();
-        engine->deck_b().load({track_b.samples.data(), track_b.frames, track_b.channels, rate});
-        engine->deck_b().set_pitch_percent(-12.0);
-        engine->deck_b().play();
-        engine->set_curve(audio::CrossfadeCurve::Linear);
-        engine->set_crossfader(0.0);
-        engine->set_master_gain(0.15);
-        pending_load.store(-1, std::memory_order_relaxed);
-        ui_xf.store(0.0f, std::memory_order_relaxed);
-        ui_gain_a.store(1.0f, std::memory_order_relaxed);
-        ui_gain_b.store(1.0f, std::memory_order_relaxed);
-        ui_master.store(0.15f, std::memory_order_relaxed);
-        ui_play_toggle.store(0, std::memory_order_relaxed);
-        samples.store(0, std::memory_order_relaxed);
-        callbacks.store(0, std::memory_order_relaxed);
-        process_ns_total.store(0, std::memory_order_relaxed);
-        process_ns_max.store(0, std::memory_order_relaxed);
-        xrun_gaps.store(0, std::memory_order_relaxed);
-        max_gap_ns.store(0, std::memory_order_relaxed);
-        device_errors.store(0, std::memory_order_relaxed);
+
+        // Curva y balance del motor
+        engine->set_curve(audio::CrossfadeCurve::ConstantPower);
+        engine->set_crossfader(ui_xf.load(std::memory_order_relaxed));
+        engine->set_master_gain(ui_master.load(std::memory_order_relaxed));
+        engine->deck_a().set_gain(ui_gain_a.load(std::memory_order_relaxed));
+        engine->deck_b().set_gain(ui_gain_b.load(std::memory_order_relaxed));
+        engine->set_eq_a(ui_eq[0][0].load(std::memory_order_relaxed),
+                         ui_eq[0][1].load(std::memory_order_relaxed),
+                         ui_eq[0][2].load(std::memory_order_relaxed));
+        engine->set_eq_b(ui_eq[1][0].load(std::memory_order_relaxed),
+                         ui_eq[1][1].load(std::memory_order_relaxed),
+                         ui_eq[1][2].load(std::memory_order_relaxed));
+        engine->set_filter_a(ui_filter[0].load(std::memory_order_relaxed));
+        engine->set_filter_b(ui_filter[1].load(std::memory_order_relaxed));
+
+        // Cargar o restaurar pistas en los decks (preserva pistas y posición si ya estaban cargadas)
+        for (int d = 0; d < 2; ++d) {
+            const int slot = active_slot[d].load(std::memory_order_relaxed);
+            audio::DecodedTrack& trk = tracks[d][slot];
+            audio::Deck& deck = (d == 0) ? engine->deck_a() : engine->deck_b();
+            if (trk.frames > 0 && trk.samples.size() >= 2) {
+                deck.load({trk.samples.data(), trk.frames, trk.channels, trk.sample_rate});
+                if (pos_on_stop[d] > 0.0) {
+                    deck.seek(pos_on_stop[d]);
+                }
+                if (was_playing_on_stop[d]) {
+                    deck.play();
+                }
+            } else {
+                deck.load({nullptr, 0, 0, rate});
+            }
+            deck.set_pitch_percent(ui_pitch[d].load(std::memory_order_relaxed));
+            deck.set_key_shift(static_cast<double>(ui_key_shift[d].load(std::memory_order_relaxed)));
+            deck.set_master_tempo(ui_master_tempo[d].load(std::memory_order_relaxed));
+            const double l_len = static_cast<double>(ui_loop_len[d].load(std::memory_order_relaxed));
+            if (l_len > 0.0) {
+                deck.set_loop(static_cast<double>(ui_loop_start[d].load(std::memory_order_relaxed)), l_len);
+            }
+        }
+
         tap_fill = 0;
         tap_cur = 0;
         tap_seq.store(0, std::memory_order_relaxed);
@@ -147,18 +189,24 @@ struct EngineCallback final : juce::AudioIODeviceCallback {
         have_last_cb = true;
 
         if (engine != nullptr && num_samples > 0) {
-            // Swap de carga staged (decode hecho en el hilo llamador).
-            const int pend = pending_load.exchange(-1, std::memory_order_acq_rel);
-            if (pend >= 0 && pend < 2) {
-                audio::DecodedTrack& staged = stage[pend];
-                if (staged.frames > 0 && staged.samples.size() >= 2) {
-                    wave::WaveformPyramid& pyr = (pend == 0) ? pyr_a : pyr_b;
-                    pyr.build(staged.samples.data(), staged.frames, staged.channels,
-                              staged.sample_rate);
-                    audio::Deck& deck = (pend == 0) ? engine->deck_a() : engine->deck_b();
-                    deck.load({staged.samples.data(), staged.frames, staged.channels,
-                               staged.sample_rate});
-                    deck.play();
+            // Swap seguro O(1) de pista (sin tocar WaveformPyramid y sin allocations)
+            for (int d = 0; d < 2; ++d) {
+                const int nxt = pending_slot[d].exchange(-1, std::memory_order_acq_rel);
+                if (nxt >= 0 && nxt < 2) {
+                    audio::DecodedTrack& trk = tracks[d][nxt];
+                    if (trk.frames > 0 && trk.samples.size() >= 2) {
+                        audio::Deck& deck = (d == 0) ? engine->deck_a() : engine->deck_b();
+                        // load() deja el deck en pausa: sólo sigue sonando si ya
+                        // estaba reproduciendo (una carga no debe arrancar sola).
+                        const bool was_playing = deck.playing();
+                        deck.load({trk.samples.data(), trk.frames, trk.channels,
+                                   trk.sample_rate});
+                        if (was_playing) {
+                            deck.play();
+                        }
+                        active_slot[d].store(nxt, std::memory_order_release);
+                        load_gen[d].fetch_add(1, std::memory_order_release);
+                    }
                 }
             }
             // Inputs de UI (smoothing en el motor).
@@ -183,13 +231,22 @@ struct EngineCallback final : juce::AudioIODeviceCallback {
                     d.play();
                 }
             }
-            // Pitch / seek (CUE) / EQ / filtro (F3.5).
+            // Pitch / key shift / master tempo / seek (CUE) / EQ / filtro / loop (F3.5/F3.7).
             for (int d = 0; d < 2; ++d) {
                 audio::Deck& deck = (d == 0) ? engine->deck_a() : engine->deck_b();
                 deck.set_pitch_percent(ui_pitch[d].load(std::memory_order_relaxed));
+                deck.set_key_shift(static_cast<double>(ui_key_shift[d].load(std::memory_order_relaxed)));
+                deck.set_master_tempo(ui_master_tempo[d].load(std::memory_order_relaxed));
                 const float seek_to = ui_seek_sec[d].exchange(-1.0f, std::memory_order_acq_rel);
                 if (seek_to >= 0.0f) {
                     deck.seek(static_cast<double>(seek_to));
+                }
+                const double loop_len = static_cast<double>(ui_loop_len[d].load(std::memory_order_relaxed));
+                if (loop_len > 0.0) {
+                    deck.set_loop(static_cast<double>(ui_loop_start[d].load(std::memory_order_relaxed)),
+                                  loop_len);
+                } else {
+                    deck.clear_loop();
                 }
             }
             engine->set_eq_a(ui_eq[0][0].load(std::memory_order_relaxed),
@@ -241,11 +298,19 @@ struct EngineCallback final : juce::AudioIODeviceCallback {
         callbacks.fetch_add(1, std::memory_order_relaxed);
     }
 
-    void audioDeviceError(const juce::String&) override {
+    void audioDeviceError(const juce::String& err) override {
+        std::printf("[audio-dbg] audioDeviceError: %s\n", err.toRawUTF8());
         device_errors.fetch_add(1, std::memory_order_relaxed);
     }
 
     void audioDeviceStopped() override {
+        std::printf("[audio-dbg] audioDeviceStopped llamado! running->false\n");
+        if (engine != nullptr) {
+            was_playing_on_stop[0] = engine->deck_a().playing();
+            was_playing_on_stop[1] = engine->deck_b().playing();
+            pos_on_stop[0] = engine->deck_a().position_seconds();
+            pos_on_stop[1] = engine->deck_b().position_seconds();
+        }
         running.store(false, std::memory_order_release);
         engine.reset();
     }
@@ -294,16 +359,12 @@ juce::String open_with(juce::AudioDeviceManager& mgr, const char* type) {
 
     juce::AudioDeviceManager::AudioDeviceSetup setup;
     setup.outputDeviceName = outs[0];
-    setup.sampleRate = 48000.0;
-    setup.bufferSize = 144;
+    setup.sampleRate = 0.0; // 0 = formato nativo de Windows (ej. 48000 Hz)
+    setup.bufferSize = 0;   // 0 = preferencia nativa del dispositivo/Windows
     setup.useDefaultInputChannels = false;
     setup.useDefaultOutputChannels = true;
 
     juce::String err = mgr.setAudioDeviceSetup(setup, false);
-    if (err.isNotEmpty()) {
-        setup.bufferSize = 0; // preferencia del dispositivo
-        err = mgr.setAudioDeviceSetup(setup, false);
-    }
     if (err.isEmpty() && mgr.getCurrentAudioDevice() == nullptr) {
         err = "dispositivo nulo tras abrir";
     }
@@ -326,9 +387,9 @@ void run_spike(int seconds) {
         const char* label;
     };
     const Mode modes[] = {
-        {"Windows Audio (Exclusive Mode)", "exclusivo"},
-        {"Windows Audio (Low Latency Mode)", "compartido low-latency (IAudioClient3)"},
         {"Windows Audio", "compartido"},
+        {"Windows Audio (Low Latency Mode)", "compartido low-latency (IAudioClient3)"},
+        {"Windows Audio (Exclusive Mode)", "exclusivo"},
     };
 
     juce::String err;
@@ -415,6 +476,16 @@ bool audio_spike_view(AudioSpikeView* out) {
         !g_cb.running.load(std::memory_order_acquire)) {
         return false;
     }
+    // Intercambio seguro de WaveformPyramid y título en el hilo de render (fuera de fill_lane).
+    for (int d = 0; d < 2; ++d) {
+        if (g_cb.pyr_ready[d].exchange(false, std::memory_order_acq_rel)) {
+            wave::WaveformPyramid& pyr = (d == 0) ? g_cb.pyr_a : g_cb.pyr_b;
+            pyr = std::move(g_cb.staged_pyr[d]);
+            char* t = (d == 0) ? g_cb.title_a : g_cb.title_b;
+            std::snprintf(t, 128, "%s", g_cb.staged_title[d]);
+        }
+    }
+
     audio::Engine& engine = *g_cb.engine;
     out->deck_a_seconds = engine.deck_a().position_seconds();
     out->deck_b_seconds = engine.deck_b().position_seconds();
@@ -429,6 +500,12 @@ bool audio_spike_view(AudioSpikeView* out) {
     out->playing_b = engine.deck_b().playing();
     out->pitch_a_pct = engine.deck_a().pitch_percent();
     out->pitch_b_pct = engine.deck_b().pitch_percent();
+    out->key_shift_a = engine.deck_a().key_shift();
+    out->key_shift_b = engine.deck_b().key_shift();
+    out->master_tempo_a = engine.deck_a().master_tempo();
+    out->master_tempo_b = engine.deck_b().master_tempo();
+    out->loading_a = g_cb.is_loading[0].load(std::memory_order_acquire);
+    out->loading_b = g_cb.is_loading[1].load(std::memory_order_acquire);
     out->peak_a = engine.peak_a();
     out->peak_b = engine.peak_b();
     out->master_env = engine.master_env();
@@ -440,6 +517,55 @@ bool audio_spike_view(AudioSpikeView* out) {
     const int idx = (out->tap_seq & 1u) ^ 1u;
     out->tap = g_cb.tap_buf[idx];
     out->tap_len = kTapLen;
+    out->load_gen[0] = g_cb.load_gen[0].load(std::memory_order_acquire);
+    out->load_gen[1] = g_cb.load_gen[1].load(std::memory_order_acquire);
+    return true;
+}
+
+bool audio_spike_is_loading(int deck) {
+    if (deck < 0 || deck > 1) {
+        return false;
+    }
+    return g_cb.is_loading[deck].load(std::memory_order_acquire);
+}
+
+bool audio_spike_load_async(int deck, const char* path, const char* title) {
+    g_cb.last_load_error[0] = '\0';
+    if (!g_started || deck < 0 || deck > 1 || path == nullptr || path[0] == '\0') {
+        std::snprintf(g_cb.last_load_error, sizeof(g_cb.last_load_error),
+                      "carga inválida (deck %d)", deck);
+        return false;
+    }
+    if (g_cb.is_loading[deck].load(std::memory_order_acquire) ||
+        g_cb.pending_slot[deck].load(std::memory_order_acquire) >= 0) {
+        std::snprintf(g_cb.last_load_error, sizeof(g_cb.last_load_error),
+                      "carga anterior aún en progreso");
+        return false;
+    }
+    g_cb.is_loading[deck].store(true, std::memory_order_release);
+    const std::string s_path(path);
+    const std::string s_title((title != nullptr && title[0] != '\0') ? title : path);
+
+    std::thread([deck, s_path, s_title]() {
+        const int slot = g_cb.active_slot[deck].load(std::memory_order_relaxed) ^ 1;
+        audio::DecodedTrack decoded;
+        std::string error;
+        if (!audio::decode_audio_file(s_path, &decoded, &error) || decoded.frames <= 0) {
+            std::printf("[f3] decode falló: %s (%s)\n", s_path.c_str(), error.c_str());
+            std::snprintf(g_cb.last_load_error, sizeof(g_cb.last_load_error), "decode falló: %s",
+                          error.empty() ? "formato no soportado" : error.c_str());
+            g_cb.is_loading[deck].store(false, std::memory_order_release);
+            return;
+        }
+        g_cb.staged_pyr[deck].build(decoded.samples.data(), decoded.frames, decoded.channels,
+                                   decoded.sample_rate);
+        g_cb.tracks[deck][slot] = std::move(decoded);
+        std::snprintf(g_cb.staged_title[deck], sizeof(g_cb.staged_title[deck]), "%s", s_title.c_str());
+        g_cb.pending_slot[deck].store(slot, std::memory_order_release);
+        g_cb.pyr_ready[deck].store(true, std::memory_order_release);
+        g_cb.is_loading[deck].store(false, std::memory_order_release);
+    }).detach();
+
     return true;
 }
 
@@ -450,11 +576,6 @@ bool audio_spike_load(int deck, const char* path, const char* title) {
                       "carga inválida (deck %d)", deck);
         return false;
     }
-    if (g_cb.pending_load.load(std::memory_order_acquire) >= 0) {
-        std::snprintf(g_cb.last_load_error, sizeof(g_cb.last_load_error),
-                      "carga anterior aún pendiente");
-        return false; // carga anterior aún pendiente
-    }
     audio::DecodedTrack decoded;
     std::string error;
     if (!audio::decode_audio_file(path, &decoded, &error) || decoded.frames <= 0) {
@@ -463,10 +584,14 @@ bool audio_spike_load(int deck, const char* path, const char* title) {
                       error.empty() ? "formato no soportado" : error.c_str());
         return false;
     }
-    g_cb.stage[deck] = std::move(decoded);
-    char* t = (deck == 0) ? g_cb.title_a : g_cb.title_b;
-    std::snprintf(t, 128, "%s", (title != nullptr && title[0] != '\0') ? title : path);
-    g_cb.pending_load.store(deck, std::memory_order_release);
+    const int slot = g_cb.active_slot[deck].load(std::memory_order_relaxed) ^ 1;
+    g_cb.staged_pyr[deck].build(decoded.samples.data(), decoded.frames, decoded.channels,
+                               decoded.sample_rate);
+    g_cb.tracks[deck][slot] = std::move(decoded);
+    std::snprintf(g_cb.staged_title[deck], sizeof(g_cb.staged_title[deck]), "%s",
+                  (title != nullptr && title[0] != '\0') ? title : path);
+    g_cb.pending_slot[deck].store(slot, std::memory_order_release);
+    g_cb.pyr_ready[deck].store(true, std::memory_order_release);
     return true;
 }
 
@@ -477,18 +602,19 @@ bool audio_spike_load_samples(int deck, const float* interleaved, std::int64_t f
         channels <= 0 || sample_rate <= 0.0) {
         return false;
     }
-    if (g_cb.pending_load.load(std::memory_order_acquire) >= 0) {
-        return false;
-    }
     audio::DecodedTrack track;
     track.channels = channels;
     track.sample_rate = sample_rate;
     track.frames = frames;
     track.samples.assign(interleaved, interleaved + frames * channels);
-    g_cb.stage[deck] = std::move(track);
-    char* t = (deck == 0) ? g_cb.title_a : g_cb.title_b;
-    std::snprintf(t, 128, "%s", (title != nullptr && title[0] != '\0') ? title : "stream");
-    g_cb.pending_load.store(deck, std::memory_order_release);
+    const int slot = g_cb.active_slot[deck].load(std::memory_order_relaxed) ^ 1;
+    g_cb.staged_pyr[deck].build(track.samples.data(), track.frames, track.channels,
+                               track.sample_rate);
+    g_cb.tracks[deck][slot] = std::move(track);
+    std::snprintf(g_cb.staged_title[deck], sizeof(g_cb.staged_title[deck]), "%s",
+                  (title != nullptr && title[0] != '\0') ? title : "stream");
+    g_cb.pending_slot[deck].store(slot, std::memory_order_release);
+    g_cb.pyr_ready[deck].store(true, std::memory_order_release);
     return true;
 }
 
@@ -500,7 +626,10 @@ void audio_spike_toggle_play(int deck) {
 }
 
 void audio_spike_set_mixer(float crossfader, float gain_a, float gain_b, float master) {
-    g_cb.ui_xf.store(crossfader, std::memory_order_relaxed);
+    // Mapeo UI crossfader [0.0, 1.0] (0 = Deck A, 0.5 = Centro, 1 = Deck B) a
+    // espacio del motor [-1.0, 1.0] (+1 = Solo A, 0 = Centro 50/50, -1 = Solo B).
+    const float engine_xf = 1.0f - 2.0f * crossfader;
+    g_cb.ui_xf.store(engine_xf, std::memory_order_relaxed);
     g_cb.ui_gain_a.store(gain_a, std::memory_order_relaxed);
     g_cb.ui_gain_b.store(gain_b, std::memory_order_relaxed);
     g_cb.ui_master.store(master, std::memory_order_relaxed);
@@ -511,6 +640,20 @@ void audio_spike_set_pitch(int deck, float pct) {
         return;
     }
     g_cb.ui_pitch[deck].store(pct, std::memory_order_relaxed);
+}
+
+void audio_spike_set_key_shift(int deck, float semitones) {
+    if (deck < 0 || deck > 1) {
+        return;
+    }
+    g_cb.ui_key_shift[deck].store(semitones, std::memory_order_relaxed);
+}
+
+void audio_spike_set_master_tempo(int deck, bool on) {
+    if (deck < 0 || deck > 1) {
+        return;
+    }
+    g_cb.ui_master_tempo[deck].store(on, std::memory_order_relaxed);
 }
 
 void audio_spike_seek(int deck, double seconds) {
@@ -534,6 +677,14 @@ void audio_spike_set_filter(int deck, float pos) {
         return;
     }
     g_cb.ui_filter[deck].store(pos, std::memory_order_relaxed);
+}
+
+void audio_spike_set_loop(int deck, double start_sec, double len_sec) {
+    if (deck < 0 || deck > 1) {
+        return;
+    }
+    g_cb.ui_loop_start[deck].store(static_cast<float>(start_sec), std::memory_order_relaxed);
+    g_cb.ui_loop_len[deck].store(static_cast<float>(len_sec), std::memory_order_relaxed);
 }
 
 const char* audio_spike_last_error() {

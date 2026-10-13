@@ -222,6 +222,31 @@ std::int64_t Database::insert_track(const TrackMeta& meta) {
     return id;
 }
 
+bool Database::delete_track(std::int64_t track_id) {
+    if (db_ == nullptr || track_id <= 0) {
+        return false;
+    }
+    sqlite3* db = static_cast<sqlite3*>(db_);
+    // Eliminar blobs de análisis asociados a la pista
+    sqlite3_stmt* blob_stmt = nullptr;
+    if (sqlite3_prepare_v2(db, "DELETE FROM analysis_blobs WHERE track_id = ?", -1, &blob_stmt,
+                           nullptr) == SQLITE_OK) {
+        sqlite3_bind_int64(blob_stmt, 1, track_id);
+        sqlite3_step(blob_stmt);
+        sqlite3_finalize(blob_stmt);
+    }
+    // Eliminar registro de tracks (el trigger tracks_ad actualiza tracks_fts automáticamente)
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db, "DELETE FROM tracks WHERE track_id = ?", -1, &stmt, nullptr) !=
+        SQLITE_OK) {
+        return false;
+    }
+    sqlite3_bind_int64(stmt, 1, track_id);
+    const bool ok = (sqlite3_step(stmt) == SQLITE_DONE);
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
 bool Database::update_analysis(std::int64_t track_id, double bpm, int camelot, bool camelot_minor,
                                const char* key_name) {
     if (db_ == nullptr) {
@@ -244,7 +269,7 @@ bool Database::update_analysis(std::int64_t track_id, double bpm, int camelot, b
     return ok;
 }
 
-std::vector<TrackMeta> Database::search(const char* query, int limit) const {
+std::vector<TrackMeta> Database::search(const char* query, int limit, int source_type) const {
     std::vector<TrackMeta> out;
     if (db_ == nullptr || limit <= 0) {
         return out;
@@ -253,25 +278,46 @@ std::vector<TrackMeta> Database::search(const char* query, int limit) const {
     const std::string fts = sanitize_fts(query);
     sqlite3_stmt* stmt = nullptr;
     if (fts.empty()) {
-        const std::string sql = std::string(kSelectCols) + " ORDER BY title LIMIT ?";
-        if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
-            return out;
+        std::string sql = std::string(kSelectCols);
+        if (source_type >= 0) {
+            sql += " WHERE source_type = ? ORDER BY title LIMIT ?";
+            if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+                return out;
+            }
+            sqlite3_bind_int(stmt, 1, source_type);
+            sqlite3_bind_int(stmt, 2, limit);
+        } else {
+            sql += " ORDER BY title LIMIT ?";
+            if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+                return out;
+            }
+            sqlite3_bind_int(stmt, 1, limit);
         }
-        sqlite3_bind_int(stmt, 1, limit);
     } else {
         // JOIN con la tabla FTS (no subquery): `rank` sólo existe con la
         // tabla FTS en el FROM de la consulta principal.
-        const std::string sql =
+        std::string sql =
             "SELECT t.track_id, t.source_type, t.uri, t.title, t.artist, t.album, t.bpm,"
             " t.musical_key, t.duration_ms, t.bitrate, t.format, t.file_size, t.added_at,"
             " t.camelot, t.camelot_minor"
             " FROM tracks_fts f JOIN tracks t ON t.track_id = f.rowid"
-            " WHERE tracks_fts MATCH ? ORDER BY rank LIMIT ?";
-        if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
-            return out;
+            " WHERE tracks_fts MATCH ?";
+        if (source_type >= 0) {
+            sql += " AND t.source_type = ? ORDER BY rank LIMIT ?";
+            if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+                return out;
+            }
+            sqlite3_bind_text(stmt, 1, fts.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int(stmt, 2, source_type);
+            sqlite3_bind_int(stmt, 3, limit);
+        } else {
+            sql += " ORDER BY rank LIMIT ?";
+            if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+                return out;
+            }
+            sqlite3_bind_text(stmt, 1, fts.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int(stmt, 2, limit);
         }
-        sqlite3_bind_text(stmt, 1, fts.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_int(stmt, 2, limit);
     }
     while (sqlite3_step(stmt) == SQLITE_ROW) {
         out.push_back(row_to_meta(stmt));
@@ -289,6 +335,25 @@ int Database::count() const {
                            nullptr) != SQLITE_OK) {
         return 0;
     }
+    int n = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        n = sqlite3_column_int(stmt, 0);
+    }
+    sqlite3_finalize(stmt);
+    return n;
+}
+
+int Database::count_source(int source_type) const {
+    if (db_ == nullptr) {
+        return 0;
+    }
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(static_cast<sqlite3*>(db_),
+                           "SELECT COUNT(*) FROM tracks WHERE source_type = ?;", -1, &stmt,
+                           nullptr) != SQLITE_OK) {
+        return 0;
+    }
+    sqlite3_bind_int(stmt, 1, source_type);
     int n = 0;
     if (sqlite3_step(stmt) == SQLITE_ROW) {
         n = sqlite3_column_int(stmt, 0);

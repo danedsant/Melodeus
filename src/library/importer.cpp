@@ -48,7 +48,7 @@ std::vector<std::filesystem::path> scan_folder(const std::filesystem::path& dir,
     return out;
 }
 
-ImportResult import_file(Database& db, const std::filesystem::path& path) {
+ImportResult import_file(Database& db, const std::filesystem::path& path, int source_type) {
     ImportResult result;
     if (!db.ok()) {
         result.error = "database not open";
@@ -82,7 +82,7 @@ ImportResult import_file(Database& db, const std::filesystem::path& path) {
     result.key = analysis::detect_key(mono.data(), decoded.frames, decoded.sample_rate);
 
     TrackMeta meta;
-    meta.source_type = 0;
+    meta.source_type = source_type;
     meta.uri = path.string();
     meta.title = path.stem().string();
     meta.bpm = result.bpm;

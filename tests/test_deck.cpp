@@ -118,3 +118,79 @@ TEST_CASE("deck gain escala la amplitud") {
     }
     CHECK(peak == doctest::Approx(0.5).epsilon(0.02));
 }
+
+TEST_CASE("deck loop envuelve la posicion y no termina") {
+    const auto tr = make_sine(440.0, 1.0, 48000.0, 1);
+    melodeus::audio::Deck deck;
+    deck.load(view(tr));
+    deck.set_loop(0.2, 0.1); // [0.2 .. 0.3) s
+    CHECK(deck.looping());
+    deck.play();
+    // Reproduce 0.5 s (> 5 vueltas del loop): sigue sonando y la posición
+    // queda dentro del rango del loop.
+    float l[256];
+    float r[256];
+    for (int i = 0; i < 94; ++i) { // 94 * 256 / 48000 ≈ 0.5 s
+        deck.render(l, r, 256, 48000.0);
+    }
+    CHECK(deck.playing());
+    const double pos = deck.position_seconds();
+    CHECK(pos >= 0.2);
+    CHECK(pos < 0.3 + 256.0 / 48000.0); // tolera el último bloque
+}
+
+TEST_CASE("deck clear_loop reanuda hasta el final") {
+    const auto tr = make_sine(440.0, 0.5, 48000.0, 1);
+    melodeus::audio::Deck deck;
+    deck.load(view(tr));
+    deck.set_loop(0.1, 0.05);
+    deck.play();
+    float l[256];
+    float r[256];
+    deck.render(l, r, 256, 48000.0);
+    CHECK(deck.playing());
+    deck.clear_loop();
+    CHECK_FALSE(deck.looping());
+    // Sin loop, llega al final de la pista y para.
+    const std::int64_t emitted = render_until_end(deck, 48000.0);
+    CHECK_FALSE(deck.playing());
+    CHECK(emitted > 0);
+}
+
+TEST_CASE("deck set_loop con len<=0 desactiva") {
+    const auto tr = make_sine(440.0, 0.2, 48000.0, 1);
+    melodeus::audio::Deck deck;
+    deck.load(view(tr));
+    deck.set_loop(0.05, 0.1);
+    CHECK(deck.looping());
+    deck.set_loop(0.05, 0.0);
+    CHECK_FALSE(deck.looping());
+}
+
+TEST_CASE("deck key_shift modifica afinacion sin alterar duracion") {
+    const auto tr = make_sine(440.0, 0.5, 48000.0, 2);
+    melodeus::audio::Deck deck;
+    deck.load(view(tr));
+    deck.set_key_shift(2.0); // +2 semitonos
+    CHECK(deck.key_shift() == doctest::Approx(2.0));
+    deck.play();
+    const std::int64_t emitted = render_until_end(deck, 48000.0);
+    // Duración de 0.5s a 48000 = 24000 frames. Key shift NO debe alterar la duración (frames emitidos).
+    CHECK(emitted >= 24000 - 256);
+    CHECK(emitted <= 24000 + 256);
+}
+
+TEST_CASE("deck master_tempo mantiene afinacion constante al alterar pitch") {
+    const auto tr = make_sine(440.0, 1.0, 48000.0, 2);
+    melodeus::audio::Deck deck;
+    deck.load(view(tr));
+    deck.set_master_tempo(true);
+    CHECK(deck.master_tempo());
+    deck.set_pitch_percent(10.0); // +10% BPM
+    deck.play();
+    float l[256];
+    float r[256];
+    deck.render(l, r, 256, 48000.0);
+    CHECK(deck.playing());
+}
+

@@ -27,7 +27,7 @@ std::vector<std::filesystem::path> scan_folder(const std::filesystem::path& dir,
 
 /// Importa un archivo a la base: decodifica (dr_* / minimp3), analiza BPM y
 /// key, escribe el BLOB del beatgrid (kind=0) y hace insert en `db`.
-ImportResult import_file(Database& db, const std::filesystem::path& path);
+ImportResult import_file(Database& db, const std::filesystem::path& path, int source_type = 0);
 
 /// Importador en background: abre su propia conexión (WAL) e importa una
 /// carpeta mientras la UI sigue a 144 fps. Progreso vía atomics.

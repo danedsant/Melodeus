@@ -52,6 +52,9 @@ public:
     /// Inserta metadatos; devuelve el track_id o -1. BPM/key pueden ser 0.
     std::int64_t insert_track(const TrackMeta& meta);
 
+    /// Elimina una pista y sus blobs de análisis asociados (FTS5 se actualiza por trigger).
+    bool delete_track(std::int64_t track_id);
+
     /// Actualiza el resultado de análisis (BPM + key) de una pista.
     bool update_analysis(std::int64_t track_id, double bpm, int camelot, bool camelot_minor,
                          const char* key_name);
@@ -62,10 +65,11 @@ public:
     bool insert_analysis_blob(std::int64_t track_id, int kind, const std::uint8_t audio_sha1[20],
                               const void* data, std::size_t size);
 
-    /// Búsqueda FTS5 (tokens AND). Consulta vacía = primeras N por título.
-    std::vector<TrackMeta> search(const char* query, int limit = 200) const;
+    /// Búsqueda FTS5 (tokens AND). source_type < 0 busca en todas las fuentes (0=local, 1=youtube, 2=soundcloud).
+    std::vector<TrackMeta> search(const char* query, int limit = 200, int source_type = -1) const;
 
     [[nodiscard]] int count() const;
+    [[nodiscard]] int count_source(int source_type) const;
 
     [[nodiscard]] int blob_count() const;
 

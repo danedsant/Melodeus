@@ -48,13 +48,21 @@ add_executable(melodeus WIN32
     main.cpp
     app_state.cpp
     deck_panel.cpp
+    help_ui.cpp
+    i18n.cpp
     library_panel.cpp
     mixer_panel.cpp
     render/device_d3d12.cpp
     render/imgui_layer.cpp
+    render/logo_texture.cpp
     render/waveform_pass.cpp
+    settings.cpp
+    settings_ui.cpp
     spike_winsnd.cpp
+    res/melodeus.rc
 )
+
+set_target_properties(melodeus PROPERTIES OUTPUT_NAME "Melodeus")
 
 if(MELODEUS_FXC)
     set(MELODEUS_FXC_FOUND ON)

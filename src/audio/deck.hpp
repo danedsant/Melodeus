@@ -1,8 +1,11 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+
+#include "audio/pitch_shifter.hpp"
 
 namespace melodeus::audio {
 
@@ -14,21 +17,23 @@ struct TrackView {
     double sample_rate = 48000.0;
 };
 
-/// Deck con transporte, gain y pitch. El resample lineal (tasa de la pista →
-/// tasa de salida, con el pitch encima) vive aquí: un único interpolador cubre
-/// la adaptación de frecuencia y el Master Tempo básico de F1.
+/// Deck con transporte, gain, pitch, Master Tempo (Key Lock) y Key Shift.
 class Deck {
 public:
     void load(const TrackView& v) noexcept {
         track_ = v;
         pos_ = 0.0;
         playing_ = false;
+        loop_on_ = false;
+        shifter_.reset();
     }
 
     void clear() noexcept {
         track_ = {};
         pos_ = 0.0;
         playing_ = false;
+        loop_on_ = false;
+        shifter_.reset();
     }
 
     void play() noexcept {
@@ -44,6 +49,7 @@ public:
     void seek(double seconds) noexcept {
         pos_ = seconds * track_.sample_rate;
         clamp_pos();
+        shifter_.reset();
     }
 
     void set_pitch_percent(double pct) noexcept {
@@ -54,6 +60,22 @@ public:
         return pitch_pct_;
     }
 
+    void set_key_shift(double semitones) noexcept {
+        key_shift_ = std::clamp(semitones, -12.0, 12.0);
+    }
+
+    [[nodiscard]] double key_shift() const noexcept {
+        return key_shift_;
+    }
+
+    void set_master_tempo(bool on) noexcept {
+        master_tempo_ = on;
+    }
+
+    [[nodiscard]] bool master_tempo() const noexcept {
+        return master_tempo_;
+    }
+
     /// Scrub: si r != 0, el deck avanza a esa velocidad (1.0 = normal,
     /// 0.125 = 1/8, negativo = atrás) ignorando el pitch. 0 desactiva.
     void set_scrub_rate(double r) noexcept {
@@ -62,6 +84,46 @@ public:
 
     [[nodiscard]] bool scrubbing() const noexcept {
         return scrub_rate_ != 0.0;
+    }
+
+    /// Loop de reproducción: al alcanzar `start_sec + len_sec` el deck vuelve
+    /// a `start_sec` (wrap). len_sec <= 0 desactiva. Se re-aplica desde la UI
+    /// en cada callback, así que el clamp contra la pista se hace aquí.
+    void set_loop(double start_sec, double len_sec) noexcept {
+        if (len_sec <= 0.0 || track_.sample_rate <= 0.0) {
+            loop_on_ = false;
+            return;
+        }
+        loop_start_ = start_sec * track_.sample_rate;
+        loop_len_ = len_sec * track_.sample_rate;
+        if (loop_len_ < 1.0) {
+            loop_len_ = 1.0;
+        }
+        loop_end_ = loop_start_ + loop_len_;
+        if (track_.frames > 0) {
+            const double max_end = static_cast<double>(track_.frames);
+            if (loop_start_ >= max_end) {
+                loop_on_ = false;
+                return;
+            }
+            if (loop_end_ > max_end) {
+                loop_end_ = max_end;
+                loop_len_ = loop_end_ - loop_start_;
+                if (loop_len_ < 1.0) {
+                    loop_on_ = false;
+                    return;
+                }
+            }
+        }
+        loop_on_ = true;
+    }
+
+    void clear_loop() noexcept {
+        loop_on_ = false;
+    }
+
+    [[nodiscard]] bool looping() const noexcept {
+        return loop_on_;
     }
 
     void set_gain(double g) noexcept {
@@ -126,7 +188,21 @@ public:
             out_l[i] = static_cast<float>((l0 + (l1 - l0) * frac) * g);
             out_r[i] = static_cast<float>((r0 + (r1 - r0) * frac) * g);
             pos_ = p + step;
+            if (loop_on_ && pos_ >= loop_end_) {
+                // Wrap al inicio del loop (fmod cubre overshoots grandes).
+                pos_ = loop_start_ + std::fmod(pos_ - loop_start_, loop_len_);
+            }
         }
+
+        // Post-proceso de Pitch Shifter (Key Shift independiente y Master Tempo)
+        const double key_ratio = std::pow(2.0, key_shift_ / 12.0);
+        double shift_ratio = key_ratio;
+        if (master_tempo_ && mult > 0.0) {
+            // Master Tempo compensa la aceleración de velocidad para fijar el tono original
+            shift_ratio = key_ratio / mult;
+        }
+        shifter_.set_ratio(shift_ratio);
+        shifter_.process(out_l, out_r, n);
     }
 
 private:
@@ -152,7 +228,14 @@ private:
     double pitch_pct_ = 0.0;
     double scrub_rate_ = 0.0;
     double gain_ = 1.0;
+    double loop_start_ = 0.0; // muestras
+    double loop_len_ = 0.0;   // muestras
+    double loop_end_ = 0.0;   // muestras (start+len, cache)
+    PitchShifter shifter_;
+    double key_shift_ = 0.0;
+    bool master_tempo_ = false;
     bool playing_ = false;
+    bool loop_on_ = false;
 };
 
 } // namespace melodeus::audio

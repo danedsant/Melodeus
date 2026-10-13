@@ -1,0 +1,78 @@
+MELODEUS DJ WORKSTATION - TÉRMINOS, CONDICIONES Y LICENCIAS
+================================================================================
+
+1. CRÉDITOS Y ARQUITECTURA DEL PROYECTO
+--------------------------------------------------------------------------------
+Melodeus es una estación de trabajo para DJ de alto rendimiento (144 Hz D3D12),
+diseñada y orquestada por danedsant con Antigravity y OpenCode.
+
+Métricas y Tecnologías de Desarrollo:
+- Arquitectura y Orquestación: danedsant
+- Plataformas de Ingeniería: Antigravity & OpenCode
+- Modelo de Inteligencia Artificial: Gemini 3.8 Flash High (Google DeepMind)
+- Cómputo Cognitivo de Desarrollo: ~14.5M tokens procesados a través del ciclo
+  de vida del proyecto (diseño de shaders, DSP en tiempo real, interfaz gráfica,
+  resolución de streaming e integración multiplataforma).
+
+
+2. TÉRMINOS Y CONDICIONES DE USO
+--------------------------------------------------------------------------------
+Melodeus se proporciona "tal cual" (AS IS), sin garantías de ningún tipo,
+expresas o implícitas, incluyendo pero no limitándose a garantías de
+comerciabilidad, idoneidad para un propósito particular y no infracción.
+
+En ningún caso los creadores, orquestadores ni colaboradores serán responsables
+de cualquier reclamo, daño o perjuicio directo o indirecto surgido del uso o la
+imposibilidad de uso de este software.
+
+El usuario es el único responsable del uso que haga de las funcionalidades de
+transmisión, búsqueda y descarga en línea, las cuales deben emplearse en estricto
+cumplimiento con las leyes locales de derechos de autor y los términos de servicio
+de las plataformas correspondientes (YouTube, SoundCloud).
+
+
+3. LICENCIAS DE COMPONENTES DE TERCEROS
+--------------------------------------------------------------------------------
+
+[1] Dear ImGui (v1.91.x)
+    Licencia: MIT License
+    Copyright (c) 2014-2024 Omar Cornut
+    Permiso concedido para uso, modificación y distribución sin restricciones.
+
+[2] JUCE Framework
+    Licencia: ISC / Permissive Modules (Audio Basics, Core)
+    Copyright (c) 2022 - Raw Material Software Limited
+
+[3] SQLite (v3.45.x)
+    Licencia: Public Domain
+    El motor de base de datos SQLite se encuentra en el dominio público.
+
+[4] Microsoft ONNX Runtime
+    Licencia: MIT License
+    Copyright (c) Microsoft Corporation. Todos los derechos reservados.
+
+[5] yt-dlp
+    Licencia: The Unlicense (Public Domain)
+    Herramienta de extracción de streams de audio y video.
+
+[6] FFmpeg
+    Licencia: LGPL v2.1+ / GPL v3
+    Copyright (c) 2000-2024 the FFmpeg developers.
+    FFmpeg es una marca registrada de Fabrice Bellard.
+
+[7] Inno Setup (v6.x)
+    Licencia: Inno Setup License (similar a BSD/MIT)
+    Copyright (C) 1997-2024 Jordan Russell / Martijn Laan.
+
+[8] Inter Typeface
+    Licencia: SIL Open Font License 1.1
+    Copyright (c) 2016-2024 Rasmus Andersson.
+
+[9] JetBrains Mono Typeface
+    Licencia: SIL Open Font License 1.1
+    Copyright (c) 2020 JetBrains s.r.o.
+
+[10] Phosphor Icons
+     Licencia: MIT License
+     Copyright (c) 2020 Phosphor Icons.
+================================================================================

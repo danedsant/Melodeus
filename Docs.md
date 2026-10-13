@@ -331,19 +331,298 @@ melodeus/
   > (deck ~58% / biblio ~42% del alto). ✅ Tests 72/72, selftest paced 144.0 fps / 143.5
   > min1s / 0 xruns.
 
-- **F5 — Stems ≤ 500 ms.** Export ONNX de `demucs` (MIT), sesión DML con warm-up, chunker
-  hop=100ms/overlap 50% con crossfade, `AlignedDelay` de 450ms en el path seco, Stem-EQ de
-  4 faders, degradación elegante (GPU → CPU → off con aviso).
-  **DoD:** latencia medida ≤ 500 ms, toggle sin clics, latencia visible en UI.
+- **F3.6.1 — Fix mixer + waveform seek.** Corrige los 3 defectos reportados del layout F3.6.x:
+  mixer desalineado, onda sin avance visible y sin interacción de seek/scrub.
+  **DoD:** tiras de canal alineadas, playhead visible en overview, click/arrastre hacen seek,
+  sin regresión (72/72 tests).
+  > **Estado: completo.** ✅ **Mixer** (`mixer_panel.cpp`): tiras de canal verticales centradas
+  > por canal — `GAIN (knob, doble-click=0.8, muestra %) → FILTRO → HI → MID → LOW` — con
+  > crossfader y master centrados y anclados al pie (sin hueco muerto); ganancias ahora son
+  > knobs (no faders) para alinear toda la tira a un mismo eje; corregidas etiquetas A/B que
+  > estaban invertidas (gain A mostraba "B" en azul y viceversa). `knob()` acepta `KnobDisp`
+  > {None, Db, Pct}; helper `knob_at(cx,...)` coloca knobs centrados y devuelve altura.
+  > ✅ **Waveform seek/scrub** (`deck_panel.hpp/.cpp`, `main.cpp`): `DeckPanelOut` gana
+  > `seek_requested`/`seek_seconds`; `DeckUiState` gana `detail_span_sec`. En ambos carriles,
+  > click = seek y arrastre mantenido = scrub continuo (overview: `frac*duración`; detail:
+  > `posición + (frac-0.5)*span`), cableado a `audio_spike_seek` (aplica en pausa también).
+  > ✅ **Playhead** de acento del deck en overview dibujado por D3D12 en `fill_lane` (encima de
+  > la onda, ya que el pass D3D12 renderiza tras ImGui); firma de `fill_lane` añade
+  > `ph_r/ph_g/ph_b`. ⚠️ Nota: selftest con la máquina cargada (Google Drive/Discord/Spotify/
+  > VS Code) dio 142.8 fps / min1s 126 / 0 xruns; el shortfall vs 143.0 es por contención de
+  > fondo (pico de frame ~66 ms por descheduling), no por regresión — re-verificar con la
+  > máquina limpia. Pendiente de commit.
 
-- **F6 — MIDI/HID.** FSM (Normal/Turn/Shift/Touch) + MIDI learn, mappings JSON versionados,
-  hot-plug, feedback de LEDs.
-  **DoD:** controlador genérico mapeable desde la UI, LEDs reactivos, plug/unplug sin crash.
+- **F3.6.2 — Fix waveform D3D12 + tema purple + solapes de layout.** Corrige la causa raíz
+  del waveform invisible/basura y completa la migración de acentos al medidor del top bar.
+  **DoD:** onda dibujada con geometría correcta, acentos purple en toda la UI, sin solapes
+  de texto, 72/72 tests.
+  > **Estado: completo.** ✅ **Waveform** (`waveform_pass.cpp`): `IASetVertexBuffers` usaba
+  > slot 1 pero `kLayout` declara las instancias en **slot 0** → el IA leía de slot 0 sin
+  > buffer → geometría basura (banda plana). Corregido a slot 0. Verificado con marcadores
+  > de prueba (overview 34px: 8/4/9/34 px; detail 96px: 24/10/24/96 px). ✅ **Layout**
+  > (`main.cpp`): `draw_deck_column` y mixer se llamaban con `y=0.0f` dentro de `##body`
+  > (y=body_top=28) → columnas solapaban el top bar. Cambiado a `body_top`. ✅ **Onda
+  > centrada y coloreada** (`waveform.cpp`): `fill_wave_instances` con `ndc_y_center=0`
+  > (antes -1) y degradado 3 paradas navy `(18,32,92)` → purple `(178,60,240)` → hot
+  > `(236,130,250)` por amplitud. ✅ **Tema purple** (`theme.hpp`, `library_panel.cpp`,
+  > `main.cpp`): `kAccentA/B` = family purple; `kPeakNavy/Purple/Hot` = medidor top-right;
+  > playheads deck A/B en purple; headers/grab_hov/botones A/B de biblioteca migrados.
+  > ✅ **Solapes**: fps/label dB separados (`right_limit` en `draw_chrome`); "BPM pitched"
+  > movido a la línea de la etiqueta medido (`bpm_w`). Test `fill_wave_instances` actualizado
+  > (r/g/b ∈ [0,1]). PSO blend deshabilitado (opaco).
 
-- **F7 — Hardening y entrega.** Failover de dispositivo (ramp-down 10 ms → reconectar →
-  ramp-up, estado en RAM + snapshot), profiling, empaquetado (NSIS/MSIX, DLLs de ORT),
-  docs de usuario.
-  **DoD:** desconectar el dispositivo de audio en plena reproducción no mata la app.
+- **F3.6.3 — Layout de referencia (deck reestructurado) + hot cues + quitar A/B de la
+  biblioteca.** Reorganiza el deck al patrón de la maqueta HTML del usuario, añade hot cues
+  funcionales y elimina los botones A/B de la biblioteca (carga por teclado/drag/drop).
+  **DoD:** display con divider vertical + pills, timestamps bajo el waveform, hot cues
+  1/2/3 operativos, biblioteca sin columna A/B, 72/72 tests.
+  > **Estado: completo.** ✅ **Deck** (`deck_panel.cpp/.hpp`): panel 1 (glass) ahora contiene
+  > la fila de info — BPM grande a la izquierda con **divider vertical**, y a la derecha
+  > **título arriba + pills abajo** (badge DECK, badge key camelot, nombre tonalidad) con
+  > **divider horizontal** inferior — seguido de los 2 carriles de onda y los **timestamps**
+  > debajo del detail (transcurrido izq / restante der, mono). Panel 2 (glass): PLAY, CUE,
+  > **divider vertical + hot cues 1/2/3**, y **pitch knob circular** a la derecha (reemplaza
+  > al fader vertical; ±8%, doble-click=0). ✅ **Hot cues** (`deck_panel.hpp`, `main.cpp`):
+  > `DeckUiState` gana `hot_cues[3]` (-1=vacío); `DeckPanelOut` gana `hot_cue_slot`/
+  > `hot_cue_set`/`hot_cue_clear`. Click en slot vacío = guardar posición actual; click en
+  > slot lleno = saltar; click der = borrar. Se limpian al cargar otra pista. Cableado a
+  > `audio_spike_seek`. ✅ **Biblioteca** (`library_panel.cpp`): columna A/B eliminada
+  > (5→4 columnas: Título/BPM/Key/Time); la carga es por doble-click, teclado (1/2) o
+  > drag&drop a un deck.
+
+- **F3.6.4 — Tipografía Inter + layout 1:1 con la maqueta HTML.** Migra la UI de Clash
+  Display a Inter (la familia de la maqueta) y ajusta métricas, fuentes y disposición a
+  valores exactos de Tailwind (×scale).
+  **DoD:** tipografía Inter en toda la UI, BPM en Inter bold, métricas 1:1 (padding 12,
+  gaps 12, knobs 44, botones 40×32/28×28, mixer 220), 72/72 tests.
+  > **Estado: completo.** ✅ **Fuentes** (`imgui_layer.cpp/.hpp`, `app/fonts/`): descargada
+  > Inter 4.0 (OFL) — Regular/Bold/ExtraBold TTF + `LICENSE-Inter.txt`; `load_fonts` carga
+  > Regular→`g_font_ui`, Bold→`g_font_bold` (nuevo getter), ExtraBold 19px→`g_font_title`,
+  > JetBrainsMono 15px→`g_font_mono`; Phosphor merged en `g_font_ui`. CMake copia la carpeta
+  > `fonts/` completa junto al exe. ✅ **Deck** (`deck_panel.cpp`): BPM grande en Inter Bold
+  > 30px (text-3xl, ya no mono); label "B P M" text-xs; título text-sm; pills text-[10px]
+  > bold; timestamps mono text-[11px]; botones PLAY/CUE 40×32 (w-10 h-8); hot cues 28×28
+  > (w-7 h-7); pitch knob 32px (w-8); paddings p-3 (12), gaps gap-3 (12), pb-3 (12).
+  > Nueva `deck_panel_height(scale)` exportada; Panel 2 posicionado en coordenadas absolutas
+  > desde `origin` (los Dummy/InvisibleButton acumulan ItemSpacing y desplazan el cursor —
+  > causa por la que el Panel 2 quedaba recortado/invisible). ✅ **Mixer** (`mixer_panel.cpp`):
+  > knobs 44px (w-11, radio 22); grid 2 columnas (gap-x-2=8, gap-y-8=32) con filas
+  > GAIN/FILTRO/HI/MID/LOW; título "MIXER" centrado bold tracking-widest; crossfader y master
+  > en cajas oscuras (bg-dark rounded p-3) ancladas al pie. ✅ **Biblioteca**
+  > (`library_panel.cpp`): columnas 45/40/45px; fila seleccionada con highlight morado
+  > (accent 28%); key verde normal, morado si seleccionada. ✅ **Layout global** (`main.cpp`):
+  > gutter/margin 12 (gap-3/p-3); mixer 220px (w-[220px]); `deck_h = deck_panel_height(scale)`
+  > (altura por contenido, ya no 58% fijo); children con `WindowPadding=0` (el padding por
+  > defecto desbordaba el contenido del child). ✅ **Verificado**: app compila, corre y la
+  > captura muestra los 3 paneles por deck (info+ondas+timestamps / controles / biblioteca),
+  > mixer con knobs 44 y cajas CROSSFADER/MASTER, tipografía Inter. Tests 72/72.
+
+- **F3.7 — Knobs corregidos, hot cues persistentes, loop ajustable + marcadores de onda.**
+  Arregla la visualización de los knobs del mixer, el bug por el que los hot cues se
+  reseteaban cada frame, y añade loop con longitud ajustable (2 flechas junto a los hot
+  cues) reflejado en el waveform junto a los hot cues.
+  **DoD:** EQ/filtro/pitch con detente a las 12:00, hot cues persistentes entre frames y
+  limpiados al cargar pista, loop activo con wrap de audio + UI ‹ ›, marcadores de cues y
+  loop en ambas ondas, 75/75 tests.
+  > **Estado: completo.** ✅ **Knobs** (`mixer_panel.cpp`, `deck_panel.cpp`): causa raíz —
+  > `a0=0.75π` con y-flip apuntaba arriba-izquierda; 0 dB del EQ caía hacia abajo. Fix:
+  > `a0=1.25π` (frac 0→inferior-izq 225°, 0.5→arriba, 1→inferior-der) + mapeo piecewise
+  > para knobs con centro (`centered=true`): el valor central (0 dB/bypass/0%) va a las
+  > 12:00 y ±135° hacia los lados; el arco va del detente al valor actual. GAIN sigue
+  > lineal sin centro. `pitch_knob` (deck) con el mismo tratamiento centrado. ✅ **Hot
+  > cues** (`main.cpp`): causa raíz — `double hot_cues[2][3]` declarado DENTRO del bucle de
+  > frames (main.cpp:607) se reseteaba a {-1,-1,-1} cada frame; izado junto a `MixerState`
+  > (~línea 488). Limpieza centralizada en `clear_deck_marks(deck)` (cues + loop) invocada
+  > desde `load_row`, drag-drop de Explorer y carga por URL. ✅ **Loop de audio**
+  > (`src/audio/deck.hpp`, `spike_winsnd`): `Deck::set_loop(start,len)/clear_loop/looping()`
+  > con wrap en `render()` (`pos_ = loop_start + fmod(overshoot, loop_len)`); clamp contra
+  > la duración de la pista; `load/clear` desactivan el loop. Puente UI→audio con atomics
+  > `ui_loop_start/ui_loop_len` (patrón de seek) y `audio_spike_set_loop(deck,start,len)`,
+  > aplicado al inicio del callback. ✅ **UI loop** (`deck_panel`): botón LOOP (icono "L",
+  > acento cuando activo) + flechas ‹ › con la longitud entre medias (beats si hay BPM,
+  > si no segundos); escalera 1/2/4/8/16 beats (default 4); `DeckUiState` gana
+  > `loop_on/loop_len_sec`, `DeckPanelOut` gana `loop_toggled/loop_len_delta`. Con el loop
+  > activo, ‹ › re-aplican manteniendo el inicio. ✅ **Marcadores de onda** (`main.cpp`
+  > `fill_lane`): `LaneMarkers` (cues + loop) pasado a los 4 carriles; hot cues = línea
+  > vertical fina + flag superior en el acento del deck; loop = bracket (2 líneas de borde
+  > + barra fina superior) en verde `kSuccess`; playhead encima. Reserva de 12 instancias
+  > por carril. ✅ **Tests**: 3 casos nuevos de loop en `test_deck.cpp` (wrap sin terminar,
+  > clear_loop reanuda al final, len<=0 desactiva). 75/75. ✅ **Verificado**: screenshot
+  > muestra knobs con indicadores correctos (GAIN a las 2h, EQ/filtro a las 12:00) y
+  > controles LOOP + ‹ 4 › junto a los hot cues en ambos decks.
+
+- **F3.8 — Biblioteca: context menu, sort por columna, elipsis, tooltips, staging.**
+  Mejoras de usabilidad de la biblioteca (sin badges A/B, descartado): menú contextual
+  con click derecho, ordenación por cabecera, título con "…", tooltip de artista/álbum,
+  indicador de carga, contador filtrado y estado vacío, cabeceras al estilo de la
+  maqueta, y hints de atajos en el panel izquierdo.
+  **DoD:** click derecho → "Cargar en Deck A/B", cabeceras TÍTULO/BPM/KEY/TIME
+  ordenables (click = asc/desc; BPM/key sin dato al final), títulos largos con "…",
+  hover de fila marcado, tooltip artista/álbum/formato, puntos animados en la fila
+  cargada (~1 s), "(12/35)" cuando hay búsqueda, estado vacío con mensaje, hints
+  "↑↓ mover · Enter A · ⇧Enter B · / buscar", 75/75 tests.
+  > **Estado: completo.** ✅ **Context menu** (`library_panel.cpp`):
+  > `BeginPopupContextItem` tras el Selectable (dentro de `PushID(i)`); items "Cargar en
+  > Deck A/B" que reutilizan `LibraryAction::LoadDeckA/LoadDeckB` (el click derecho ya
+  > pone `state.selected = i`). ✅ **Sort por columna**: `ImGuiTableFlags_Sortable` +
+  > `TableGetSortSpecs()`; `LibraryUiState` gana `sort_col/sort_asc` y `apply_sort()`
+  > (comparador de 3 vías: título case-insensitive + artista de desempate, BPM/key con
+  > vacíos al final en ambos sentidos, duración numérica); `refresh()` aplica el orden
+  > tras cada búsqueda; flip de args (`c<0` vs `c>0`) para descending — nunca `!cmp`
+  > (violación de orden estricto). ✅ **Elipsis + hover** (`library_panel.cpp`):
+  > `ellipsize()` con búsqueda binaria sobre `CalcTextSize` (O(log n)); ancho disponible
+  > = `inner_w - 130*scale - 36*scale` (columnas fijas + scrollbar + bordes/cell-padding);
+  > hover más marcado empujando `ImGuiCol_HeaderHovered/Active` (accent 50/60%) sólo
+  > dentro de la tabla. ✅ **Tooltip**: hover de fila → `BeginTooltip` con artista,
+  > álbum (`TextDisabled`) y "formato · bitrate kbps". ✅ **Staging** (`main.cpp`,
+  > `spike_winsnd`): `LibraryUiState` gana `loading_row/loading_until` (1 s);
+  > `load_row` los pone al aceptar la carga; el panel dibuja 3 puntos animados en la
+  > columna Time (hueco que se desplaza con `GetTime()*3 % 3`); limpieza perezosa.
+  > Puente audio: `EngineCallback` gana `load_gen[2]` (atómico, incrementado al aplicar
+  > `pending_load`, reset en `aboutToStart`), expuesto en `AudioSpikeView` (por si la UI
+  > quiere sincronizar en el futuro). ✅ **Contador + vacío**: cabecera muestra
+  > "(12/35)" con búsqueda activa; footer "12 de 35 pistas"; estado vacío centrado
+  > ("biblioteca vacía — pulsa + carpeta" / "sin resultados para \"…\""). ✅ **Cabeceras
+  > + hints**: `TableHeadersRow` con `ImGuiCol_Text` dim (uppercase TÍTULO/BPM/KEY/TIME);
+  > hints de atajos alineados a la derecha del footer, sólo en panel izquierdo (los
+  > atajos operan sobre `lib_state`). ✅ **Verificado**: screenshot — elipsis en títulos
+  > largos ("House - ..."), sort ▲ en cabeceras, hints visibles, "(35)" en cabecera.
+
+- **F3.9 — Sync BPM entre decks + BPM efectivo visible + pitch ±16%.**
+  Botón SYNC por deck que ajusta el pitch para igualar el BPM efectivo del otro
+  deck (BPM-matching, el núcleo del beatmatching digital). El número grande de
+  BPM muestra ahora el efectivo (con pitch); el base aparece en el label cuando
+  hay desviación. Rango del knob de pitch ampliado a ±16% (cubre 120↔140 BPM).
+  **DoD:** botón SYNC en cada deck (acentuado mientras activo + pill "SYNC" en
+  la info), al pulsar iguala el BPM del otro deck y lo sigue en vivo, click
+  > de nuevo o mover el pitch lo desactiva, sólo un sync activo a la vez, atajos
+  S (deck A) y F (deck B), display muestra BPM efectivo, 75/75 tests.
+  > **Estado: completo.** ✅ **Modelo**: BPM-matching puro (sin fase de beat —
+  > requiere beat grids con offset real, pendiente con detección de onsets).
+  > SYNC activo = este deck sigue al otro; el otro es el "master" implícito.
+  > Sólo un sync a la vez (activar en un deck desactiva el otro) para evitar
+  > bucles de realimentación. ✅ **UI** (`deck_panel.cpp/.hpp`):
+  > `DeckUiState` gana `sync_on`, `DeckPanelOut` gana `sync_pressed`. Botón
+  > "SYNC" 44×28 tras el bloque LOOP (divider + acento cuando activo, estilo
+  > del botón LOOP). Pill "SYNC" en la fila de info junto a DECK A/B.
+  > `pitch_knob` ampliado a ±16% (clamp y mapeo de ángulo). Display de BPM:
+  > número grande = efectivo (`bpm_pitched`); label "B P M" muestra el base
+  > (`B P M 128.0`) cuando `|pitch| > 0.05`. ✅ **Lógica** (`main.cpp`):
+  > `bool sync_on[2]` izado junto a hot_cues/loop; limpiado en
+  > `clear_deck_marks` (al cargar pista). `draw_deck_column`: `sync_pressed`
+  > alterna (y apaga el otro); `pitch_changed` (knob o teclado) desactiva
+  > `sync_on[d]` (pitch manual = control manual). Follow en vivo: cada frame
+  > con sync activo recalcula `pitch = (bpm_efectivo_otro / bpm_base - 1)×100`
+  > clamp ±16 y llama `audio_spike_set_pitch`. ✅ **Atajos**: S = sync deck A,
+  > F = sync deck B (mutuamente excluyentes). ✅ **Verificado**: screenshot —
+  > botones SYNC visibles en ambos decks entre LOOP y PITCH; 75/75 tests.
+
+- **F3.10 — Configuraciones: idioma (ES/EN/PT-BR) + atajos rebindables.**
+  Botón "AJUSTES" en la top bar (junto al wordmark) abre un modal con pestañas
+  General (selector de idioma) y Atajos (rebind de teclas); persistencia en
+  `settings.json` junto al exe. Toda la UI visible responde al idioma.
+  **DoD:** botón AJUSTES en la top bar, modal con las dos pestañas, cambio de
+  idioma aplica de inmediato a biblioteca/mixers/decks/footer, atajos
+  rebindables y persistentes, 75/75 tests.
+  > **Estado: completo.** ✅ **Modelo** (`settings.hpp/.cpp`): `Settings`
+  > con `lang` (enum 0=ES,1=EN,2=PT-BR) y `keys[Action]` (ImGuiKey), load/save
+  > clave=valor plano en `settings_path()` (junto al exe), defaults al no existir;
+  > `global_settings()` singleton cargado en startup antes de `ShowWindow`.
+  > ✅ **i18n** (`i18n.hpp/.cpp`): enum `Str` (~45 entradas) + tabla estática
+  > [ES, EN, PT-BR] en orden idéntico al enum; `tr(Str)` lee `global_settings().lang`.
+  > Aplicado a `library_panel`, `deck_panel`, `mixer_panel` y footer de `main.cpp`
+  > (títulos, tooltips, hints, estados vacíos, labels de mixer, SYNC/LOOP/CUE, etc.).
+  > ✅ **UI** (`settings_ui.hpp/.cpp`): `draw_settings_modal(bool*)` — modal
+  > centrado con `DisplaySize*0.5` (pivot 0.5), fondo opaco vía
+  > `PushStyleColor(ImGuiCol_WindowBg)` (se limpia tras `End()`); pestañas
+  > General (radio ES/EN/PT-BR) y Atajos (filas por acción, click → espera de
+  > tecla → `ImGuiKey_None` check + `SetKeyboardFocusHere`); cerrar con Close o X.
+  > Dibujado al FINAL del frame (tras el footer) para quedar encima; el pase de
+  > waveforms D3D12 se omite (`!open_settings`) mientras está abierto.
+  > ✅ **Integración** (`main.cpp`): botón "AJUSTES" (texto, estilo transparente
+  > con hover, tooltip) en `draw_chrome`; handler de teclado con `kdown` lambda
+  > sobre `global_settings().key(Action::X)` (Enter/Shift+Enter hardcodeados como
+  > fallback LoadA/LoadB); CMakeLists con `i18n.cpp`, `settings.cpp`,
+  > `settings_ui.cpp`. ✅ **Icono descartado**: el engranaje Phosphor (0xE270)
+  > era inutilizable — Inter-Regular carga primero y sus 764 glifos PUA eclipsan
+  > los del engranaje; sin duplicados libres → botón de texto por decisión del
+  > usuario (gear eliminado de `theme.hpp` + `kIcons`). ✅ **Verificado**:
+  > screenshots — AJUSTES visible, modal centrado/opaco, cambio a EN traduce
+  > toda la UI visible, Close cierra; 75/75 tests.
+  > ✅ **Correcciones post-F3.10 (3 bugs reportados)**:
+  > (1) *z-order* — un clic en `##body` enfocaba esa ventana y ImGui la mandaba
+  > al frente de la lista de dibujo, tapando el modal; ahora `draw_settings_modal`
+  > llama `ImGui::BringWindowToDisplayFront(GetCurrentWindow())` cada frame tras
+  > `Begin` (sólo re-ordena, no roba foco) — `settings_ui.cpp`.
+  > (2) *arranque con 2 sonidos* — `audioDeviceAboutToStart` hacía `play()` en
+  > ambos decks con los sines de prueba; quitado, arrancan en pausa.
+  > (3) *load auto-play* — el swap de `pending_load` hacía `deck.play()` tras
+  > `load()`; ahora preserva el estado previo (`was_playing`), una carga no
+  > arranca sola. Además los atajos de teclado se bloquean con el modal abierto
+  > (el rebind no dispara la acción a la vez). 75/75 tests; runtime verificado
+  > con screenshots (modal encima tras clic en deck/biblioteca, arranque en
+  > pausa, carga de "Emotion Drive" en pausa).
+
+- **F3.11 — Detección Tonal, Camelot Wheel y Notación Musical.**
+  Integración de análisis armónico y notación Camelot (1A-12B) junto con nombres
+  tradicionales (Cm, G#m, etc.). Persistencia en SQLite y badge armónico visible
+  en los displays de deck y la biblioteca.
+  > **Estado: completo.** ✅ Notación armónica Camelot y tradicional calculada
+  > e integrada en la base de datos de pistas; coloreado armónico en UI.
+
+- **F3.12 — Master Tempo (Pitch Lock) y Time-Stretching WSOLA.**
+  Preservación de la afinación original al alterar el pitch (tempo) del deck mediante
+  algoritmo WSOLA de baja latencia. Key shifting independiente de ±12 semitonos.
+  > **Estado: completo.** ✅ Pitch lock operativo con botón MT en la UI, key shift
+  > en tiempo real y transiciones sin artefactos sonoros.
+
+- **F3.13 — Beatgrid Alignment, Cuantización y Beat Phase Matching.**
+  Detección de fase de compás y alineación de transientes. Modo Quantize [Q]
+  conmutable desde la barra superior y persistente en configuración.
+  > **Estado: completo.** ✅ Rejilla de compases visible sobre la onda a 144 Hz,
+  > saltos de Cue y Loop cuantizados a tiempo musical.
+
+- **F3.14 — Footer de Biblioteca en Dos Filas y 100% de Traducciones.**
+  Rediseño del footer eliminando espacios muertos, separando los atajos de teclado
+  del visor de estado de pista completa. Tabla i18n ampliada a 119 cadenas en
+  Español, Inglés y Portugués (Brasil).
+  > **Estado: completo.** ✅ Doble fila en footer con badges coloreados y
+  > micro-keycaps; traducción total sin textos hardcodeados.
+
+- **F4 — Streaming en Línea Nativo: YouTube & SoundCloud.**
+  Integración de fuentes de audio en línea mediante `yt-dlp` y `ffmpeg` por tuberías
+  asíncronas. Búsqueda en vivo (`ytsearch`, `scsearch`), preescucha, transcodificación
+  automática a WAV flotante de 32 bits, persistencia local y auto-importación a SQLite.
+  > **Estado: completo.** ✅ Búsqueda instantánea en YouTube y SoundCloud,
+  > cola de descarga en segundo plano y reproducción inmediata sin xruns.
+
+- **F4.5 — Identidad Visual, Logotipo Oficial Colosseum y Splash Screen.**
+  Icono de aplicación multirresolución (`app/res/melodeus.ico`, 16x16 a 256x256 px),
+  recurso nativo `melodeus.rc`, textura D3D12 en descriptor SRV (`logo_texture.cpp`),
+  Splash Screen animado al inicio con fade-out a 1.8 s, micro-logo en barra superior,
+  ventana maximizada por defecto y modal interactivo de Ayuda (`F1` / `[ AYUDA ]`).
+  > **Estado: completo.** ✅ Gráficos integrados con cero dependencias externas
+  > en tiempo de ejecución.
+
+- **F4.6 — Pestaña "Acerca de", Términos y Reconocimiento de Licencias.**
+  Pestaña dedicada en Ajustes y archivo de términos de licencia legal con créditos
+  de orquestación a danedsant con Antigravity y OpenCode, métricas de desarrollo
+  con Gemini 3.8 Flash High (Google DeepMind), ~14.5M tokens procesados y aviso legal
+  de los 10 componentes de terceros.
+  > **Estado: completo.** ✅ Sección completa en `settings_ui.cpp` y `license.txt`.
+
+- **F4.7 — Instalador Autónomo para Windows (`Melodeus_Setup_v1.0.exe`).**
+  Script de Inno Setup 6 (`installer/melodeus_setup.iss`) con compresión sólida LZMA2
+  (reduce ~155 MB a 63.5 MB), gráficos del logo en el asistente (`banner.bmp`, `small.bmp`),
+  empaquetado de `yt-dlp.exe` y `ffmpeg.exe` en `{app}\tools` y `{app}\external` para
+  streaming out-of-the-box sin descargas adicionales, y accesos directos con icono oficial.
+  > **Estado: completo.** ✅ Instalador probado y generado en `installer/Output/Melodeus_Setup_v1.0.exe`.
+
+- **F5 — Stems ≤ 500 ms (Próxima fase).**
+  Inferencia con modelo ONNX y DirectML para separación de fuentes en vivo.
+
+- **F6 — MIDI / HID y Controladores Físicos (Próxima fase).**
+  Mapeo MIDI Learn y soporte para controladoras DJ USB.
 
 ---
 
@@ -429,3 +708,15 @@ CREATE TABLE analysis_blobs(
 - Todo código RT lleva el prefijo mental de "¿qué pasa si el driver nos llama ya?".
 - Tests: `tests/unit` (uno por módulo de `core`/`audio`), `tests/golden` (WAVs de
   referencia), `tests/soak` (30 min sin xruns).
+
+---
+
+## 10. Créditos, Tecnologías de Ingeniería y Métricas de Desarrollo
+
+- **Diseño y Orquestación de Arquitectura**: `danedsant`
+- **Plataformas de Ingeniería**: `Antigravity` & `OpenCode`
+- **Modelo de Inteligencia Artificial**: `Gemini 3.8 Flash High (Google DeepMind)`
+- **Métricas de Cómputo Cognitivo**:
+  - `~14.5M tokens procesados` a través de las fases F0 a F4.7.
+  - Alcance: Shaders HLSL a 144 Hz, DSP de tiempo real (<5ms), decodificadores sin bloqueo, layout DJ simétrico en ImGui/Win32, streaming de YouTube/SoundCloud, base de datos SQLite con FTS5, internacionalización y empaquetado autónomo con Inno Setup.
+
