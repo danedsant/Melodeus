@@ -9,19 +9,19 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/C%2B%2B-20-00599C?style=for-the-badge&logo=cplusplus&logoColor=white" alt="C++20"/>
-  <img src="https://img.shields.io/badge/DirectX%2012-144%20FPS-E03C11?style=for-the-badge&logo=windows&logoColor=white" alt="DirectX 12"/>
-  <img src="https://img.shields.io/badge/Audio-WASAPI%20%7C%20ASIO%20%3C5ms-00C7B7?style=for-the-badge" alt="Low Latency Audio"/>
-  <img src="https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows x64"/>
-  <img src="https://img.shields.io/badge/Tests-82%2F82%20Passing-brightgreen?style=for-the-badge" alt="Tests"/>
-  <img src="https://img.shields.io/badge/Installer-Inno%20Setup%20v1.0-blueviolet?style=for-the-badge" alt="Installer"/>
+  <img src="https://img.shields.io/badge/C%2B%2B-20-B23CF0?style=for-the-badge&logo=cplusplus&logoColor=white" alt="C++20"/>
+  <img src="https://img.shields.io/badge/DirectX%2012-144%20FPS-B23CF0?style=for-the-badge&logo=windows&logoColor=white" alt="DirectX 12"/>
+  <img src="https://img.shields.io/badge/Audio-WASAPI%20%7C%20ASIO%20%3C5ms-B23CF0?style=for-the-badge" alt="Low Latency Audio"/>
+  <img src="https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-B23CF0?style=for-the-badge&logo=windows&logoColor=white" alt="Windows x64"/>
+  <img src="https://img.shields.io/badge/Tests-82%2F82%20Passing-B23CF0?style=for-the-badge" alt="Tests"/>
+  <img src="https://img.shields.io/badge/Installer-Inno%20Setup%20v1.0-B23CF0?style=for-the-badge" alt="Installer"/>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/AI%20Model-Gemini%203.8%20Flash%20High-8E24AA?style=flat-square" alt="Gemini 3.8 Flash High"/>
-  <img src="https://img.shields.io/badge/Tokens-~14.5M%20Processed-F57C00?style=flat-square" alt="Tokens Processed"/>
-  <img src="https://img.shields.io/badge/Orchestrated%20by-danedsant-1E88E5?style=flat-square" alt="Author"/>
-  <img src="https://img.shields.io/badge/Engineering-Antigravity%20%26%20OpenCode-43A047?style=flat-square" alt="Platform"/>
+  <img src="https://img.shields.io/badge/AI%20Model-Gemini%203.8%20Flash%20High-B23CF0?style=flat-square" alt="Gemini 3.8 Flash High"/>
+  <img src="https://img.shields.io/badge/Tokens-~14.5M%20Processed-B23CF0?style=flat-square" alt="Tokens Processed"/>
+  <img src="https://img.shields.io/badge/Orchestrated%20by-danedsant-B23CF0?style=flat-square" alt="Author"/>
+  <img src="https://img.shields.io/badge/Engineering-Antigravity%20%26%20OpenCode-B23CF0?style=flat-square" alt="Platform"/>
 </p>
 
 ---
@@ -174,7 +174,7 @@ El instalador autónomo empaqueta todos los binarios, shaders, fuentes y las her
 
 - **Orquestación**: danedsant
 - **Plataformas de Ingeniería**: Antigravity & OpenCode
-- **Modelo de Inteligencia Artificial**: `Gemini 3.8 Flash High`
+- **Modelos de Inteligencia Artificial**: `Gemini 3.8 Flash High y MiMo V2 Flash Free`
 - **Cómputo Cognitivo**: `~14.5M tokens procesados` abarcando DSP de audio, shaders HLSL, interfaz Win32/ImGui, transcodificación streaming y sistema de empaquetado.
 
 ---
